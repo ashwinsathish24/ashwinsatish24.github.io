@@ -1,0 +1,6 @@
+{
+  "name": "Ashwin's Alley",
+  "description": "An interactive sensory experience featuring moving grain cleared by the mouse, soft ambient music, synthesized windchime clicks, and romantic flying quotes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
