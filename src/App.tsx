@@ -1079,55 +1079,57 @@ export default function App() {
     parallaxRef.current.targetY = py * 18;
   };
 
-  // Touch support for mobile devices
-  const touchStartYRef = useRef(0);
+  // Touch support for mobile
   const touchStartPinchDistRef = useRef(0);
 
-  const handleTouchStart = (e: TouchEvent<HTMLDivElement>) => {
-    lastInteractionTimeRef.current = Date.now();
-    lastScrollTimeRef.current = Date.now();
-    audio.resume();
-    if (e.touches.length === 2) {
-      e.preventDefault();
-      // Pinch start: record initial distance between fingers
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      touchStartPinchDistRef.current = Math.sqrt(dx * dx + dy * dy);
-    } else if (e.touches.length > 0) {
-      touchStartYRef.current = e.touches[0].clientY;
-    }
-  };
+  useEffect(() => {
+    const el = appContainerRef.current;
+    if (!el) return;
 
-  const handleTouchMove = (e: TouchEvent<HTMLDivElement>) => {
-    if (e.touches.length === 2) {
-      e.preventDefault();
-      // Pinch-to-zoom: map distance delta to spatial Z-scroll
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const deltaDist = touchStartPinchDistRef.current - dist;
-      touchStartPinchDistRef.current = dist;
-      targetScrollZRef.current += deltaDist * 2.5;
-      targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
-    } else if (e.touches.length > 0) {
-      const tx = e.touches[0].clientX;
-      const ty = e.touches[0].clientY;
-      
-      // Reset activity timers
+    const onTouchStart = (e: TouchEvent) => {
       lastInteractionTimeRef.current = Date.now();
-      
-      mouseRef.current.targetX = tx;
-      mouseRef.current.targetY = ty;
+      lastScrollTimeRef.current = Date.now();
+      audio.resume();
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        touchStartPinchDistRef.current = Math.sqrt(dx * dx + dy * dy);
+      }
+    };
 
-      const windowWidth = window.innerWidth;
-      const windowHeight = window.innerHeight;
-      const px = (tx - windowWidth / 2) / (windowWidth / 2);
-      const py = (ty - windowHeight / 2) / (windowHeight / 2);
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const deltaDist = touchStartPinchDistRef.current - dist;
+        touchStartPinchDistRef.current = dist;
+        targetScrollZRef.current += deltaDist * 2.5;
+        targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
+      } else if (e.touches.length > 0) {
+        const tx = e.touches[0].clientX;
+        const ty = e.touches[0].clientY;
+        lastInteractionTimeRef.current = Date.now();
+        mouseRef.current.targetX = tx;
+        mouseRef.current.targetY = ty;
+        const ww = window.innerWidth;
+        const wh = window.innerHeight;
+        const px = (tx - ww / 2) / (ww / 2);
+        const py = (ty - wh / 2) / (wh / 2);
+        parallaxRef.current.targetX = px * 12;
+        parallaxRef.current.targetY = py * 12;
+      }
+    };
 
-      parallaxRef.current.targetX = px * 12;
-      parallaxRef.current.targetY = py * 12;
-    }
-  };
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+    };
+  }, []);
 
   // Screen click handler for synthesized windchimes
   const handleScreenClick = (e: MouseEvent<HTMLDivElement>) => {
@@ -1430,8 +1432,6 @@ export default function App() {
       }}
       onMouseMove={handleMouseMove}
       onMouseDown={() => audio.resume()}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
       onClick={handleScreenClick}
     >
       {/* 1. Animated Film Grain with Mouse Clearing Spotlight */}
