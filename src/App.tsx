@@ -1079,8 +1079,8 @@ export default function App() {
     parallaxRef.current.targetY = py * 18;
   };
 
-  // Touch support for mobile
-  const touchStartPinchDistRef = useRef(0);
+  // Touch support for mobile — simple vertical drag = Z-scroll
+  const touchStartYRef = useRef(0);
 
   useEffect(() => {
     const el = appContainerRef.current;
@@ -1090,27 +1090,20 @@ export default function App() {
       lastInteractionTimeRef.current = Date.now();
       lastScrollTimeRef.current = Date.now();
       audio.resume();
-      if (e.touches.length === 2) {
-        e.preventDefault();
-        const dx = e.touches[0].clientX - e.touches[1].clientX;
-        const dy = e.touches[0].clientY - e.touches[1].clientY;
-        touchStartPinchDistRef.current = Math.sqrt(dx * dx + dy * dy);
+      if (e.touches.length > 0) {
+        touchStartYRef.current = e.touches[0].clientY;
       }
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length === 2) {
-        e.preventDefault();
-        const dx = e.touches[0].clientX - e.touches[1].clientX;
-        const dy = e.touches[0].clientY - e.touches[1].clientY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const deltaDist = touchStartPinchDistRef.current - dist;
-        touchStartPinchDistRef.current = dist;
-        targetScrollZRef.current += deltaDist * 2.5;
-        targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
-      } else if (e.touches.length > 0) {
-        const tx = e.touches[0].clientX;
+      if (e.touches.length > 0) {
         const ty = e.touches[0].clientY;
+        const deltaY = ty - touchStartYRef.current;
+        touchStartYRef.current = ty;
+        targetScrollZRef.current += deltaY * 4.5;
+        targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
+
+        const tx = e.touches[0].clientX;
         lastInteractionTimeRef.current = Date.now();
         mouseRef.current.targetX = tx;
         mouseRef.current.targetY = ty;
