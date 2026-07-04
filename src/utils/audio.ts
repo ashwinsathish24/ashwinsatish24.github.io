@@ -35,7 +35,7 @@ class AudioEngine {
 
     try {
       const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.ctx = new AudioCtxClass();
+      this.ctx = new AudioCtxClass({ sampleRate: 44100 });
       this.isInitialized = true;
       this.setupAmbientBGM();
       this.startMelodyLoop();
@@ -73,7 +73,9 @@ class AudioEngine {
     const ctx = this.ctx;
 
     this.masterGainNode = ctx.createGain();
-    this.masterGainNode.gain.setValueAtTime(this.isMuted ? 0.0 : 0.6, ctx.currentTime);
+    this.masterGainNode.gain.setValueAtTime(0, ctx.currentTime);
+    // Fade in over 2s to avoid initial burst on mobile
+    this.masterGainNode.gain.linearRampToValueAtTime(this.isMuted ? 0.0 : 0.3, ctx.currentTime + 2.0);
     this.masterGainNode.connect(ctx.destination);
 
     this.lowpassFilter = ctx.createBiquadFilter();
@@ -85,7 +87,7 @@ class AudioEngine {
     this.delayNode = ctx.createDelay(3.0);
     this.delayFeedback = ctx.createGain();
     this.delayNode.delayTime.setValueAtTime(1.2, ctx.currentTime);
-    this.delayFeedback.gain.setValueAtTime(0.5, ctx.currentTime);
+    this.delayFeedback.gain.setValueAtTime(0.3, ctx.currentTime); // lower feedback to prevent build-up
     this.lowpassFilter.connect(this.delayNode);
     this.delayNode.connect(this.delayFeedback);
     this.delayFeedback.connect(this.delayNode);
@@ -93,7 +95,7 @@ class AudioEngine {
 
     // Day Drones (A Major 9th/11th)
     this.dayDroneGain = ctx.createGain();
-    this.dayDroneGain.gain.setValueAtTime(this.isMuted ? 0.0 : 1.0, ctx.currentTime);
+    this.dayDroneGain.gain.setValueAtTime(this.isMuted ? 0.0 : 0.6, ctx.currentTime);
     this.dayDroneGain.connect(this.lowpassFilter!);
 
     const dayFrequencies = [55.00, 110.00, 164.81, 277.18];
@@ -102,7 +104,7 @@ class AudioEngine {
       osc.type = idx % 2 === 0 ? 'triangle' : 'sine';
       osc.frequency.setValueAtTime(freq, ctx.currentTime);
       const oscGain = ctx.createGain();
-      oscGain.gain.setValueAtTime(idx === 0 ? 0.08 : 0.05, ctx.currentTime);
+      oscGain.gain.setValueAtTime(idx === 0 ? 0.05 : 0.03, ctx.currentTime);
       osc.connect(oscGain);
       oscGain.connect(this.dayDroneGain!);
       osc.start();
@@ -114,13 +116,13 @@ class AudioEngine {
     this.nightDroneGain.gain.setValueAtTime(0.0, ctx.currentTime);
     this.nightDroneGain.connect(this.lowpassFilter!);
 
-    const nightFrequencies = [41.20, 55.00, 82.41, 110.00, 130.81]; // E1, A1, E2, A2, C3
+    const nightFrequencies = [55.00, 82.41, 110.00, 130.81]; // removed 41.20 (E1 - too low for mobile)
     nightFrequencies.forEach((freq, idx) => {
       const osc = ctx.createOscillator();
       osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
       osc.frequency.setValueAtTime(freq, ctx.currentTime);
       const oscGain = ctx.createGain();
-      oscGain.gain.setValueAtTime(idx === 0 ? 0.15 : 0.1, ctx.currentTime);
+      oscGain.gain.setValueAtTime(idx === 0 ? 0.1 : 0.07, ctx.currentTime);
       osc.connect(oscGain);
       oscGain.connect(this.nightDroneGain!);
       osc.start();
@@ -139,9 +141,8 @@ class AudioEngine {
       lfo.type = 'sine';
       lfo.frequency.setValueAtTime(f, ctx.currentTime);
       const lfoGain = ctx.createGain();
-      lfoGain.gain.setValueAtTime(0.04, ctx.currentTime);
+      lfoGain.gain.setValueAtTime(0.03, ctx.currentTime);
       lfo.connect(lfoGain);
-      // This is simplified; real LFOs would target specific gains
       lfo.start();
       this.lfoNodes.push({ osc: lfo, gain: lfoGain });
     });
@@ -279,8 +280,8 @@ class AudioEngine {
     bodyGain.gain.setValueAtTime(0, startTime);
      // Soft, elegant 50ms attack to avoid harshness
      bodyGain.gain.linearRampToValueAtTime(0.18, startTime + 0.05);
-     // Very long, lingering romantic decay (4.5 seconds)
-    bodyGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 4.5);
+     // Very long, lingering romantic decay (4.5 seconds) - use setTargetAtTime
+    bodyGain.gain.setTargetAtTime(0, startTime + 4.0, 0.5);
 
     bodyOsc.connect(bodyGain);
     bodyGain.connect(noteGain);
@@ -293,7 +294,7 @@ class AudioEngine {
     const chimeGain = ctx.createGain();
     chimeGain.gain.setValueAtTime(0, startTime);
     chimeGain.gain.linearRampToValueAtTime(0.02, startTime + 0.004); // Instant mallet strike
-    chimeGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.12); // Fast chime decay
+    chimeGain.gain.setTargetAtTime(0, startTime + 0.04, 0.02); // Fast chime decay
 
     chimeOsc.connect(chimeGain);
     chimeGain.connect(noteGain);
@@ -396,7 +397,7 @@ class AudioEngine {
       oscGain.gain.linearRampToValueAtTime(baseVolume * overtoneVolumeMultipliers[index], startTime + attackTime);
       
       const overtoneDecay = decayDuration * overtoneDecayMultipliers[index];
-      oscGain.gain.exponentialRampToValueAtTime(0.0001, startTime + attackTime + overtoneDecay);
+      oscGain.gain.setTargetAtTime(0, startTime + attackTime, overtoneDecay * 0.3);
 
       osc.connect(oscGain);
       oscGain.connect(chimeMasterGain);

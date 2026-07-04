@@ -101,9 +101,6 @@ export default function App() {
     };
   }, []);
 
-  // Touch start coordinate tracking
-  const touchStartYRef = useRef(0);
-
   // Wheel event listener for spatial Z-zoom depth
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -1083,15 +1080,41 @@ export default function App() {
   };
 
   // Touch support for mobile devices
+  const touchStartYRef = useRef(0);
+  const touchStartPinchDistRef = useRef(0);
+
+  const handleTouchStart = (e: TouchEvent<HTMLDivElement>) => {
+    lastInteractionTimeRef.current = Date.now();
+    lastScrollTimeRef.current = Date.now();
+    audio.resume();
+    if (e.touches.length === 2) {
+      // Pinch start: record initial distance between fingers
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchStartPinchDistRef.current = Math.sqrt(dx * dx + dy * dy);
+    } else if (e.touches.length > 0) {
+      touchStartYRef.current = e.touches[0].clientY;
+    }
+  };
+
   const handleTouchMove = (e: TouchEvent<HTMLDivElement>) => {
-    if (e.touches.length > 0) {
+    if (e.touches.length === 2) {
+      // Pinch-to-zoom: map distance delta to spatial Z-scroll
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const deltaDist = touchStartPinchDistRef.current - dist;
+      touchStartPinchDistRef.current = dist;
+      targetScrollZRef.current += deltaDist * 2.5;
+      targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
+    } else if (e.touches.length > 0) {
       const tx = e.touches[0].clientX;
       const ty = e.touches[0].clientY;
       
-       // Reset activity timers
-       lastInteractionTimeRef.current = Date.now();
-       
-       mouseRef.current.targetX = tx;
+      // Reset activity timers
+      lastInteractionTimeRef.current = Date.now();
+      
+      mouseRef.current.targetX = tx;
       mouseRef.current.targetY = ty;
 
       const windowWidth = window.innerWidth;
@@ -1101,27 +1124,6 @@ export default function App() {
 
       parallaxRef.current.targetX = px * 12;
       parallaxRef.current.targetY = py * 12;
-
-      // Vertical touch drag maps to Z-zoom depth
-      const deltaY = ty - touchStartYRef.current; // reversed mapping
-      touchStartYRef.current = ty;
-
-      targetScrollZRef.current += deltaY * 4.5;
-      targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
-      
-      if (phase === 'alley') {
-         // Reset activity and idle timer on touch activity
-
-
-        // Prioritize active zoom mode
-        setIsZooming(true);
-        if (zoomTimeoutRef.current) {
-          clearTimeout(zoomTimeoutRef.current);
-        }
-        zoomTimeoutRef.current = setTimeout(() => {
-          setIsZooming(false);
-        }, 2500);
-      }
     }
   };
 
@@ -1425,14 +1427,7 @@ export default function App() {
       }}
       onMouseMove={handleMouseMove}
       onMouseDown={() => audio.resume()}
-      onTouchStart={(e) => {
-        lastInteractionTimeRef.current = Date.now();
-        lastScrollTimeRef.current = Date.now();
-        audio.resume();
-        if (e.touches.length > 0) {
-          touchStartYRef.current = e.touches[0].clientY;
-        }
-      }}
+      onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onClick={handleScreenClick}
     >
