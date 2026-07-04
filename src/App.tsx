@@ -1079,51 +1079,6 @@ export default function App() {
     parallaxRef.current.targetY = py * 18;
   };
 
-  // Touch support for mobile — simple vertical drag = Z-scroll
-  const touchStartYRef = useRef(0);
-
-  useEffect(() => {
-    const el = appContainerRef.current;
-    if (!el) return;
-
-    const onTouchStart = (e: TouchEvent) => {
-      lastInteractionTimeRef.current = Date.now();
-      lastScrollTimeRef.current = Date.now();
-      audio.resume();
-      if (e.touches.length > 0) {
-        touchStartYRef.current = e.touches[0].clientY;
-      }
-    };
-
-    const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length > 0) {
-        const ty = e.touches[0].clientY;
-        const deltaY = ty - touchStartYRef.current;
-        touchStartYRef.current = ty;
-        targetScrollZRef.current += deltaY * 4.5;
-        targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
-
-        const tx = e.touches[0].clientX;
-        lastInteractionTimeRef.current = Date.now();
-        mouseRef.current.targetX = tx;
-        mouseRef.current.targetY = ty;
-        const ww = window.innerWidth;
-        const wh = window.innerHeight;
-        const px = (tx - ww / 2) / (ww / 2);
-        const py = (ty - wh / 2) / (wh / 2);
-        parallaxRef.current.targetX = px * 12;
-        parallaxRef.current.targetY = py * 12;
-      }
-    };
-
-    el.addEventListener('touchstart', onTouchStart, { passive: false });
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    return () => {
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-    };
-  }, []);
-
   // Screen click handler for synthesized windchimes
   const handleScreenClick = (e: MouseEvent<HTMLDivElement>) => {
     const cx = e.clientX;
@@ -1420,8 +1375,7 @@ export default function App() {
       ref={appContainerRef}
       className="fixed inset-0 w-full h-full overflow-hidden text-[#1C1917] select-none font-sans bg-[#FAF9F5]"
       style={{
-        cursor: 'none',
-        touchAction: 'none'
+        cursor: 'none'
       }}
       onMouseMove={handleMouseMove}
       onMouseDown={() => audio.resume()}
