@@ -1088,6 +1088,7 @@ export default function App() {
     lastScrollTimeRef.current = Date.now();
     audio.resume();
     if (e.touches.length === 2) {
+      e.preventDefault();
       // Pinch start: record initial distance between fingers
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -1099,6 +1100,7 @@ export default function App() {
 
   const handleTouchMove = (e: TouchEvent<HTMLDivElement>) => {
     if (e.touches.length === 2) {
+      e.preventDefault();
       // Pinch-to-zoom: map distance delta to spatial Z-scroll
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -1423,7 +1425,8 @@ export default function App() {
       ref={appContainerRef}
       className="fixed inset-0 w-full h-full overflow-hidden text-[#1C1917] select-none font-sans bg-[#FAF9F5]"
       style={{
-        cursor: 'none'
+        cursor: 'none',
+        touchAction: 'none'
       }}
       onMouseMove={handleMouseMove}
       onMouseDown={() => audio.resume()}
