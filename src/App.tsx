@@ -5,14 +5,24 @@
 
 import { useState, useEffect, useRef, MouseEvent, TouchEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { QUOTES } from './data/quotes';
+import { getQuotes } from './data/quotes';
+import { ABOUT_LINES } from './data/about';
+import QuoteSubmit from './components/QuoteSubmit';
 import { audio } from './utils/audio';
-import { ChimeRipple, FloatingQuoteInstance } from './types';
+import { Quote, ChimeRipple, FloatingQuoteInstance, AboutLineInstance } from './types';
 import { Volume2, VolumeX, Sparkles } from 'lucide-react';
 
 export default function App() {
+  // Phase & intro states
+  const [phase, setPhase] = useState<'loading' | 'about' | 'alley'>('loading');
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [aboutComplete, setAboutComplete] = useState(false);
+
+  // About lines as spatial-zoom centered elements
+  const aboutLinesRef = useRef<AboutLineInstance[]>([]);
+  const aboutCompleteRef = useRef(false);
+
   // Experience start & audio states
-  const [hasStarted, setHasStarted] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [muteNotice, setMuteNotice] = useState<string | null>(null);
 
@@ -20,8 +30,8 @@ export default function App() {
   const hasStartedRef = useRef(false);
   const isHoveringRef = useRef(false);
   useEffect(() => {
-    hasStartedRef.current = hasStarted;
-  }, [hasStarted]);
+    hasStartedRef.current = phase === 'alley';
+  }, [phase]);
 
   // Scattered floating quotes state
   const [activeQuotes, setActiveQuotes] = useState<FloatingQuoteInstance[]>([]);
@@ -48,9 +58,9 @@ export default function App() {
   // Lagging parallax coordinate references
   const parallaxRef = useRef({ x: 0, y: 0, targetX: 0, targetY: 0 });
 
-  // 3D Spatial Scroll Zoom Tracking
-  const scrollZRef = useRef(0);
-  const targetScrollZRef = useRef(0);
+  // 3D Spatial Scroll Zoom Tracking (about section occupies -2400 to 0, alley from 0+)
+  const scrollZRef = useRef(-2400);
+  const targetScrollZRef = useRef(-2400);
   const [isZooming, setIsZooming] = useState(false);
   const isZoomingRef = useRef(false);
   const zoomTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -63,12 +73,24 @@ export default function App() {
   const lastScrollTimeRef = useRef(Date.now());
   const lastInteractionTimeRef = useRef(Date.now());
   const idleProgressRef = useRef(0);
+  const peakIdleProgressRef = useRef(0);
   const triggerRefreshRef = useRef<() => void>(() => {});
 
   // Sync state to ref for stale closure prevention in interval timers
   useEffect(() => {
     isZoomingRef.current = isZooming;
   }, [isZooming]);
+
+  // Phase ref for RAF loop and wheel handler
+  const phaseRef = useRef(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  // About completion ref sync
+  useEffect(() => {
+    aboutCompleteRef.current = aboutComplete;
+  }, [aboutComplete]);
 
   // Clean up zoom timer on unmount
   useEffect(() => {
@@ -85,39 +107,74 @@ export default function App() {
   // Wheel event listener for spatial Z-zoom depth
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
-      if (!hasStarted) return;
 
       // Reset activity and idle timer on scroll activity
       lastScrollTimeRef.current = Date.now();
       lastInteractionTimeRef.current = Date.now();
 
-      // Prioritize active zoom mode
-      setIsZooming(true);
-      if (zoomTimeoutRef.current) {
-        clearTimeout(zoomTimeoutRef.current);
+      // Try to resume audio on scroll (some browsers treat wheel as user gesture)
+      audio.resume();
+
+      if (phaseRef.current === 'alley') {
+        // Prioritize active zoom mode
+        setIsZooming(true);
+        if (zoomTimeoutRef.current) {
+          clearTimeout(zoomTimeoutRef.current);
+        }
+        zoomTimeoutRef.current = setTimeout(() => {
+          setIsZooming(false);
+        }, 2500);
       }
-      zoomTimeoutRef.current = setTimeout(() => {
-        setIsZooming(false);
-      }, 2500);
       
       // REVERSED scroll: scrolling down (deltaY > 0) pulls out, scrolling up (deltaY < 0) zooms deeper
       targetScrollZRef.current -= e.deltaY * 0.75;
       
-      // Clamp target zoom range: 0 (starting depth) to 4200 (end of spatial layout)
-      targetScrollZRef.current = Math.max(0, Math.min(4200, targetScrollZRef.current));
+      // Clamp target zoom range: -2400 (about section start) to 4200 (end of spatial layout)
+      targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
     };
 
     window.addEventListener('wheel', handleWheel, { passive: true });
     return () => {
       window.removeEventListener('wheel', handleWheel);
     };
-  }, [hasStarted]);
+  }, []);
 
   // Shuffle quotes initially to give a random flow every session
-  const shuffledQuotesRef = useRef<typeof QUOTES>([]);
+  const shuffledQuotesRef = useRef<Quote[]>([]);
   useEffect(() => {
-    shuffledQuotesRef.current = [...QUOTES].sort(() => Math.random() - 0.5);
+    getQuotes().then((quotes) => {
+      shuffledQuotesRef.current = [...quotes].sort(() => Math.random() - 0.5);
+    });
   }, []);
+
+  // Initialize about lines with staggered z-offsets for spatial zoom reveal
+  useEffect(() => {
+    const lines: AboutLineInstance[] = ABOUT_LINES.map((text, idx) => ({
+      id: `about-${idx}`,
+      text,
+      idx,
+      depth: 0.4 + (idx / ABOUT_LINES.length) * 1.2,
+      zOffset: 800 - idx * 160,
+    }));
+    aboutLinesRef.current = lines;
+  }, []);
+
+  // Auto-transition: loading -> about only (about -> alley is scroll-based)
+  useEffect(() => {
+    if (phase === 'loading') {
+      const progressInterval = setInterval(() => {
+        setLoadingProgress(p => Math.min(p + 4, 100));
+      }, 100);
+      const aboutTimer = setTimeout(() => {
+        audio.init();
+        setPhase('about');
+      }, 2800);
+      return () => {
+        clearInterval(progressInterval);
+        clearTimeout(aboutTimer);
+      };
+    }
+  }, [phase]);
 
   // 1. Core Canvas Render Loop (Grain + High-Performance 3D Parallax Interpolation + Spot Clearance)
   useEffect(() => {
@@ -167,13 +224,22 @@ export default function App() {
       scrollZRef.current += (targetScrollZRef.current - scrollZRef.current) * 0.05;
       const sz = scrollZRef.current;
 
-      // Update Memories Idle Progress in the silent space (sz >= 4100)
-      const inSilentSpace = sz >= 4100;
-      const isIdle = inSilentSpace && (Date.now() - lastScrollTimeRef.current >= 5000);
-      const targetIdleProgress = isIdle ? 1.0 : 0.0;
-      // Smoothly interpolate idle progress
-      idleProgressRef.current += (targetIdleProgress - idleProgressRef.current) * 0.04;
-      const idleProgress = idleProgressRef.current;
+       // Update Memories Idle Progress in the silent space (sz >= 4100)
+       const inSilentSpace = sz >= 4100;
+       const isIdle = inSilentSpace && (Date.now() - lastScrollTimeRef.current >= 2000);
+       const targetIdleProgress = isIdle ? 1.0 : 0.0;
+        // Smoothly interpolate idle progress (asymmetric: slow fade-in, 5x faster fade-out)
+        const idleSpeed = targetIdleProgress > idleProgressRef.current ? 0.006 : 0.03;
+        idleProgressRef.current += (targetIdleProgress - idleProgressRef.current) * idleSpeed;
+       const idleProgress = idleProgressRef.current;
+
+       // Handle melody transition based on silent space
+       if (inSilentSpace) {
+         audio.setMelodyMode('night');
+       } else {
+         audio.setMelodyMode('day');
+       }
+
 
       // Cursor normalization when left idle (for 5 seconds, regardless of space)
       const isIdleGeneral = Date.now() - lastInteractionTimeRef.current >= 5000;
@@ -208,7 +274,7 @@ export default function App() {
       const pZoom = sz >= 3000 ? Math.max(0, Math.min(1, (sz - 3000) / 1200)) : 0;
 
       // Actively trigger beautiful windchimes at discrete steps as they zoom/travel through Z-space
-      if (isZoomingRef.current) {
+      if (isZoomingRef.current && phaseRef.current === 'alley') {
         const diff = Math.abs(sz - lastChimeZRef.current);
         if (diff >= 180) {
           const zPercent = sz / 4200;
@@ -221,7 +287,7 @@ export default function App() {
       }
 
       // 2b. Check boundary transitions and update reachedZoomEnd state dynamically
-      if (isZoomingRef.current || sz > 5) {
+      if (phaseRef.current === 'alley' && (isZoomingRef.current || sz > 5)) {
         // We set reachedZoomEnd to true only when they are very close to the end of the zoom,
         // and they are NOT actively scrolling back out (targetScrollZRef.current >= 4050)
         const reachedEnd = sz >= 4050 && targetScrollZRef.current >= 4050;
@@ -471,6 +537,65 @@ export default function App() {
         }
       });
 
+      // About lines — pure sequential segments with quote-style spatial zoom
+      if (phaseRef.current === 'about') {
+        const lineCount = ABOUT_LINES.length;
+        const ABOUT_RANGE = 2400;
+        const segSize = ABOUT_RANGE / lineCount;
+        const aboutLineEls = document.querySelectorAll('.about-line');
+        aboutLineEls.forEach((el) => {
+          const idx = parseInt(el.getAttribute('data-idx') || '0');
+          const line = aboutLinesRef.current[idx];
+          if (!line) return;
+
+          const segStart = -ABOUT_RANGE + idx * segSize;
+          const segProgress = Math.max(0, Math.min(1, (sz - segStart) / segSize));
+
+          // Opacity: fade in (25%), hold (50%), fade out (25%) — no overlap between lines
+          let opacity = 0;
+          if (segProgress < 0.25) {
+            opacity = 0.95 * (segProgress / 0.25);
+          } else if (segProgress < 0.75) {
+            opacity = 0.95;
+          } else {
+            opacity = 0.95 * ((1 - segProgress) / 0.25);
+          }
+
+          // Exact same spatial zoom as quotes: dz passes through camera at segment center
+          const dz = (segProgress - 0.5) * 400;
+          const dx = parallax.x * line.depth;
+          const dy = parallax.y * line.depth;
+
+          // Same blur logic as quotes
+          const blur = dz > 120 ? Math.min(8, (dz - 120) * 0.02) : 0;
+
+          (el as HTMLElement).style.transform = `translate(-50%, -50%) perspective(1000px) translate3d(${dx}px, ${dy}px, ${dz}px) scale(1)`;
+          (el as HTMLElement).style.opacity = String(opacity);
+          (el as HTMLElement).style.pointerEvents = 'none';
+          (el as HTMLElement).style.filter = `blur(${blur}px)`;
+        });
+      }
+
+      // Set aboutComplete when last line's segment ends, hide on scroll back to start
+      if (phaseRef.current === 'about') {
+        if (sz >= 30 && !aboutCompleteRef.current) {
+          aboutCompleteRef.current = true;
+          setAboutComplete(true);
+        } else if (sz < 0 && aboutCompleteRef.current) {
+          aboutCompleteRef.current = false;
+          setAboutComplete(false);
+        }
+      }
+
+      // Zoom out in alley → transition back to about phase
+      if (phaseRef.current === 'alley' && sz < -50) {
+        phaseRef.current = 'about';
+        setPhase('about');
+        setActiveQuotes([]);
+        setFinishedQuotesCount(0);
+        setAboutComplete(true);
+      }
+
       // Clear main canvas for redraw
       ctx.clearRect(0, 0, width, height);
 
@@ -627,7 +752,7 @@ export default function App() {
         const nodeA = {
           id: 'interests',
           label: 'INTERESTS',
-          details: 'Philosophy  •  Minimal Design  •  Sound Synth  •  Creative Dev',
+          details: 'Creativity  •  Design  •  Music  •  Automation',
           x: centerX + offsetA_X + Math.sin(t + 1.0) * floatAmp,
           y: centerY + offsetA_Y + Math.cos(t + 1.5) * floatAmp,
           labelYOffset: -20,
@@ -636,9 +761,9 @@ export default function App() {
         };
 
         const nodeB = {
-          id: 'academics',
-          label: 'ACADEMICS',
-          details: 'Computer Science  •  Deep Learning  •  Systems Architecture',
+          id: 'knowledge',
+          label: 'KNOWLEDGE',
+          details: 'AutoCAD  •  Software Development  •  AI automation',
           x: centerX + offsetB_X + Math.sin(t + 2.5) * floatAmp,
           y: centerY + offsetB_Y + Math.cos(t + 3.0) * floatAmp,
           labelYOffset: -20,
@@ -649,7 +774,7 @@ export default function App() {
         const nodeC = {
           id: 'goal',
           label: 'GOAL',
-          details: 'Building Mindful Tools  •  Aesthetic Code  •  The Joy of Learning',
+          details: 'Dohickey Engineer  •  Endless search of Opportunities',
           x: centerX + offsetC_X + Math.sin(t + 4.0) * floatAmp,
           y: centerY + offsetC_Y + Math.cos(t + 4.5) * floatAmp,
           labelYOffset: 24,
@@ -678,41 +803,66 @@ export default function App() {
         const glowB = Math.pow(baseGlowB, 1.5) * (isB_Closest ? 1.0 : 0.4);
         const glowC = Math.pow(baseGlowC, 1.5) * (isC_Closest ? 1.0 : 0.4);
 
-        const glowFactors = { interests: glowA, academics: glowB, goal: glowC };
+        const glowFactors = { interests: glowA, knowledge: glowB, goal: glowC };
+
+        // Track peak idleProgress so node reveals lock at max reached
+        peakIdleProgressRef.current = Math.max(peakIdleProgressRef.current, idleProgress);
+        const peakIdle = peakIdleProgressRef.current;
+
+        // Per-node reveals based on peak (locked — never decrease during fade-out)
+        const nodeReveal = {
+          interests: Math.max(0, Math.min(1, (peakIdle - 0.0) / 0.50)),
+          knowledge: Math.max(0, Math.min(1, (peakIdle - 0.35) / 0.40)),
+          goal: Math.max(0, Math.min(1, (peakIdle - 0.60) / 0.30)),
+        };
+
+        // Shared global fade — same for ALL elements (controls fade-out consistently)
+        const globalFade = Math.max(0, Math.min(1, idleProgress / 0.50));
+
+        // Node opacity = min(locked reveal, global fade)
+        const nodeProgress = {
+          interests: Math.min(nodeReveal.interests, globalFade),
+          knowledge: Math.min(nodeReveal.knowledge, globalFade),
+          goal: Math.min(nodeReveal.goal, globalFade),
+        };
+
+        // Cross-links: fade in after all nodes fully revealed, fade out with globalFade
+        const allNodesFullyRevealed = nodeReveal.interests >= 1 && nodeReveal.knowledge >= 1 && nodeReveal.goal >= 1;
+        const crossFadeIn = Math.max(0, Math.min(1, (idleProgress - 0.90) / 0.10));
 
         // 2. Draw connection lines (constellation lines drawing themselves)
-        // From 0.3 to 1.0, connection lines draw themselves
-        const drawFrac = Math.max(0, Math.min(1.0, (idleProgress - 0.3) / 0.7));
-        if (drawFrac > 0) {
-          ctx.save();
-          ctx.strokeStyle = `rgba(250, 249, 245, ${0.12 * drawFrac})`;
-          ctx.lineWidth = 1.0;
-          ctx.setLineDash([4, 4]); // lovely dashed lines for a stellar feel!
+        ctx.save();
+        ctx.strokeStyle = `rgba(250, 249, 245, 0.12)`;
+        ctx.lineWidth = 1.0;
+        ctx.setLineDash([4, 4]);
 
-          const drawLine = (x1: number, y1: number, x2: number, y2: number) => {
-            ctx.beginPath();
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x1 + (x2 - x1) * drawFrac, y1 + (y2 - y1) * drawFrac);
-            ctx.stroke();
-          };
+        const drawLine = (x1: number, y1: number, x2: number, y2: number, frac: number) => {
+          if (frac <= 0) return;
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x1 + (x2 - x1) * frac, y1 + (y2 - y1) * frac);
+          ctx.stroke();
+        };
 
-          // Draw connections between the nodes
-          drawLine(nodeA.x, nodeA.y, nodeB.x, nodeB.y);
-          drawLine(nodeB.x, nodeB.y, nodeC.x, nodeC.y);
-          drawLine(nodeC.x, nodeC.y, nodeA.x, nodeA.y);
+        // Draw center-to-node connections as each node reveals
+        drawLine(centerX, centerY, nodeA.x, nodeA.y, nodeProgress.interests);
+        drawLine(centerX, centerY, nodeB.x, nodeB.y, nodeProgress.knowledge);
+        drawLine(centerX, centerY, nodeC.x, nodeC.y, nodeProgress.goal);
 
-          // Draw connections from the center (emitting dot) to the nodes
-          drawLine(centerX, centerY, nodeA.x, nodeA.y);
-          drawLine(centerX, centerY, nodeB.x, nodeB.y);
-          drawLine(centerX, centerY, nodeC.x, nodeC.y);
-
-          ctx.restore();
+        // Cross-links fade in after all nodes revealed, fade out with globalFade
+        if (allNodesFullyRevealed) {
+          const crossFrac = Math.min(crossFadeIn, globalFade);
+          drawLine(nodeA.x, nodeA.y, nodeB.x, nodeB.y, crossFrac);
+          drawLine(nodeB.x, nodeB.y, nodeC.x, nodeC.y, crossFrac);
+          drawLine(nodeC.x, nodeC.y, nodeA.x, nodeA.y, crossFrac);
         }
+
+        ctx.restore();
 
         // 3. Draw nodes, labels, glows, and sub-details
         nodes.forEach((node) => {
-          const factor = glowFactors[node.id as 'interests' | 'academics' | 'goal'];
-          const nodeOpacity = Math.min(1.0, idleProgress / 0.45);
+          const factor = glowFactors[node.id as 'interests' | 'knowledge' | 'goal'];
+          const nodeOpacity = nodeProgress[node.id as 'interests' | 'knowledge' | 'goal'];
 
           // Draw glowing halo around node
           if (factor > 0) {
@@ -733,7 +883,7 @@ export default function App() {
           // Draw the physical dot
           ctx.save();
           // Subtle pulsation for the dot
-          const pulse = 1.0 + Math.sin(Date.now() * 0.003 + (node.id === 'interests' ? 0 : node.id === 'academics' ? 2 : 4)) * 0.15;
+          const pulse = 1.0 + Math.sin(Date.now() * 0.003 + (node.id === 'interests' ? 0 : node.id === 'knowledge' ? 2 : 4)) * 0.15;
           ctx.fillStyle = `rgba(250, 249, 245, ${0.85 * nodeOpacity})`;
           ctx.beginPath();
           ctx.arc(node.x, node.y, 3.5 * pulse, 0, Math.PI * 2);
@@ -747,7 +897,7 @@ export default function App() {
           ctx.stroke();
           ctx.restore();
 
-          // Draw main label (INTERESTS, ACADEMICS, GOAL)
+          // Draw main label (INTERESTS, KNOWLEDGE, GOAL)
           ctx.save();
           ctx.fillStyle = `rgba(250, 249, 245, ${0.75 * nodeOpacity})`;
           ctx.font = '10px "Inter", sans-serif';
@@ -759,7 +909,7 @@ export default function App() {
           ctx.restore();
 
           // Draw sub-details if the mouse is close (smoothly faded in)
-          const detailOpacity = Math.max(0, (factor - 0.22) / 0.78) * nodeOpacity;
+           const detailOpacity = factor * nodeOpacity;
           if (detailOpacity > 0.01) {
             ctx.save();
             ctx.fillStyle = `rgba(250, 249, 245, ${0.5 * detailOpacity})`;
@@ -879,7 +1029,6 @@ export default function App() {
         ctx.stroke();
         ctx.restore();
       }
-
       // Restore composite mode
       ctx.globalCompositeOperation = 'source-over';
 
@@ -899,9 +1048,11 @@ export default function App() {
     const mx = e.clientX;
     const my = e.clientY;
     
+    // Resume audio from user gesture (mouse move)
+    audio.resume();
+    
     // Reset activity timers
     lastInteractionTimeRef.current = Date.now();
-    lastScrollTimeRef.current = Date.now();
     
     // Canvas spotlight target
     mouseRef.current.targetX = mx;
@@ -937,11 +1088,10 @@ export default function App() {
       const tx = e.touches[0].clientX;
       const ty = e.touches[0].clientY;
       
-      // Reset activity timers
-      lastInteractionTimeRef.current = Date.now();
-      lastScrollTimeRef.current = Date.now();
-      
-      mouseRef.current.targetX = tx;
+       // Reset activity timers
+       lastInteractionTimeRef.current = Date.now();
+       
+       mouseRef.current.targetX = tx;
       mouseRef.current.targetY = ty;
 
       const windowWidth = window.innerWidth;
@@ -955,10 +1105,13 @@ export default function App() {
       // Vertical touch drag maps to Z-zoom depth
       const deltaY = ty - touchStartYRef.current; // reversed mapping
       touchStartYRef.current = ty;
+
+      targetScrollZRef.current += deltaY * 4.5;
+      targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
       
-      if (hasStarted) {
-        // Reset activity and idle timer on touch activity
-        lastScrollTimeRef.current = Date.now();
+      if (phase === 'alley') {
+         // Reset activity and idle timer on touch activity
+
 
         // Prioritize active zoom mode
         setIsZooming(true);
@@ -968,9 +1121,6 @@ export default function App() {
         zoomTimeoutRef.current = setTimeout(() => {
           setIsZooming(false);
         }, 2500);
-
-        targetScrollZRef.current += deltaY * 4.5;
-        targetScrollZRef.current = Math.max(0, Math.min(4200, targetScrollZRef.current));
       }
     }
   };
@@ -982,19 +1132,14 @@ export default function App() {
     const xPercent = cx / window.innerWidth;
     const yPercent = cy / window.innerHeight;
 
-    // Reset activity and idle timer on click
-    lastScrollTimeRef.current = Date.now();
+     // Reset activity and idle timer on click
     lastInteractionTimeRef.current = Date.now();
 
-    // Warm-up the sound engine on first click
-    if (!hasStarted) {
-      audio.init();
-      audio.resume();
-      setHasStarted(true);
-    }
+    // Resume audio on any click (browsers require user gesture)
+    audio.resume();
 
-    // Synthesize beautiful windchimes at mapped frequencies using the current Z-spatial depth!
-    const zPercent = scrollZRef.current / 4200;
+    // Synthesize beautiful windchimes at mapped frequencies using Z-spatial depth!
+    const zPercent = Math.max(0, Math.min(1, scrollZRef.current / 4200));
     audio.playWindchimeClick(xPercent, yPercent, zPercent);
 
     // Create a physical click ripple expanding outwards
@@ -1085,8 +1230,9 @@ export default function App() {
   // Synchronize the triggerRefreshRef with the latest closures for infinite Alley replenishment
   useEffect(() => {
     triggerRefreshRef.current = () => {
-      const deck = shuffledQuotesRef.current.length > 0 ? shuffledQuotesRef.current : QUOTES;
+      const deck = shuffledQuotesRef.current.length > 0 ? shuffledQuotesRef.current : [];
       const getNextQuote = (currentActive: FloatingQuoteInstance[]) => {
+        if (deck.length === 0) return null;
         let selected = deck[quoteQueueIndexRef.current % deck.length];
         quoteQueueIndexRef.current++;
 
@@ -1105,6 +1251,7 @@ export default function App() {
 
         for (let i = 0; i < 4; i++) {
           const quote = getNextQuote(initialQuotes);
+          if (!quote) continue;
           const depth = depthOptions[i % depthOptions.length];
           const pos = generateCleanPlacement(initialQuotes, depth);
           const computedScale = 0.7 + (depth * 0.35);
@@ -1128,11 +1275,12 @@ export default function App() {
 
   // 2. Randomized Scattered Quotes Generator
   useEffect(() => {
-    if (!hasStarted) return;
+    if (phase !== 'alley') return;
 
     // Helper to pick a non-duplicate quote from the deck
     const getNextQuote = (currentActive: FloatingQuoteInstance[]) => {
-      const deck = shuffledQuotesRef.current.length > 0 ? shuffledQuotesRef.current : QUOTES;
+      const deck = shuffledQuotesRef.current.length > 0 ? shuffledQuotesRef.current : [];
+      if (deck.length === 0) return null;
       let selected = deck[quoteQueueIndexRef.current % deck.length];
       quoteQueueIndexRef.current++;
 
@@ -1181,6 +1329,7 @@ export default function App() {
         if (prev.length >= 5) return prev;
 
         const nextQuote = getNextQuote(prev);
+        if (!nextQuote) return prev;
 
         // Find the least occupied Z-depth to distribute quotes beautifully across different planes
         const depthOptions = [0.4, 0.8, 1.2, 1.6];
@@ -1251,17 +1400,11 @@ export default function App() {
       clearInterval(spawnTimer);
       clearInterval(recycleTimer);
     };
-  }, [hasStarted]);
+  }, [phase]);
 
   // Ambient sound mute controller
   const handleMuteToggle = (e: MouseEvent) => {
     e.stopPropagation(); // don't trigger chime click
-    if (!hasStarted) {
-      audio.init();
-      audio.resume();
-      setHasStarted(true);
-      return;
-    }
     const muted = audio.toggleMute();
     setIsMuted(muted);
     
@@ -1270,20 +1413,6 @@ export default function App() {
     setTimeout(() => {
       setMuteNotice(null);
     }, 3000);
-  };
-
-  // Enter the Alley button trigger
-  const handleStartApp = () => {
-    audio.init();
-    audio.resume();
-    setHasStarted(true);
-    // Play warm entry chord
-    setTimeout(() => {
-      audio.playWindchimeClick(0.35, 0.45);
-    }, 100);
-    setTimeout(() => {
-      audio.playWindchimeClick(0.65, 0.50);
-    }, 350);
   };
 
   return (
@@ -1295,9 +1424,11 @@ export default function App() {
         cursor: 'none'
       }}
       onMouseMove={handleMouseMove}
+      onMouseDown={() => audio.resume()}
       onTouchStart={(e) => {
         lastInteractionTimeRef.current = Date.now();
         lastScrollTimeRef.current = Date.now();
+        audio.resume();
         if (e.touches.length > 0) {
           touchStartYRef.current = e.touches[0].clientY;
         }
@@ -1309,7 +1440,7 @@ export default function App() {
       <canvas
         id="grain-canvas"
         ref={canvasRef}
-        className="absolute inset-0 w-full h-full pointer-events-none z-50"
+        className="absolute inset-0 w-full h-full pointer-events-none z-[60]"
       />
 
       {/* 2. Interactive Click Ripples */}
@@ -1360,7 +1491,7 @@ export default function App() {
           className="group flex items-center gap-2.5 px-3.5 py-1.5 rounded-full hover:bg-stone-200/50 active:bg-stone-300/40 transition-all duration-300 outline-none border border-transparent hover:border-stone-300/30"
           title="Toggle ambient music"
         >
-          {hasStarted && (
+          {phase === 'alley' && (
             <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-[9px] text-neutral-400 font-mono tracking-wider">
               {isMuted ? "PLAY MUSIC" : "MUTE MUSIC"}
             </span>
@@ -1368,7 +1499,7 @@ export default function App() {
           <span className="text-xs font-light tracking-[0.25em] opacity-65 font-sans uppercase group-hover:opacity-100 transition-opacity">
             Ashwin's Alley
           </span>
-          {hasStarted && (
+          {phase === 'alley' && (
             <div className="opacity-50 group-hover:opacity-100 transition-opacity ml-0.5">
               {isMuted ? <VolumeX size={12} /> : <Volume2 size={12} className="animate-pulse" />}
             </div>
@@ -1390,91 +1521,123 @@ export default function App() {
         </AnimatePresence>
       </div>
 
-      {/* 4. Initial Landing Start Screen Overlay */}
-      <AnimatePresence>
-        {!hasStarted && (
+      {/* 4. Intro: Loading Logo + About Lines */}
+      {phase === 'loading' && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-[#FAF9F5] px-6 pointer-events-none">
           <motion.div
-            id="start-overlay"
-            initial={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 1.2, ease: "easeInOut" }}
-            className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-[#FAF9F5]/98 px-6 pointer-events-auto"
-            onClick={handleStartApp}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 1.2, ease: "easeOut" }}
+            className="flex flex-col items-center"
           >
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.15, duration: 0.9 }}
-              className="text-center max-w-md"
+            <span className="text-[100px] md:text-[140px] font-extralight text-stone-800 leading-none mb-6 select-none">
+              愛
+            </span>
+            <div className="relative h-[2px] bg-stone-200 rounded-full overflow-hidden" style={{ width: '160px' }}>
+              <div
+                className="absolute left-0 top-0 h-full bg-stone-600 rounded-full transition-all duration-100 ease-out"
+                style={{ width: `${loadingProgress}%` }}
+              />
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* 5. Spatial Zoom Viewport (About Lines + Scattered Quotes) */}
+      {(phase === 'about' || phase === 'alley') && (
+        <div id="experience-viewport" className="absolute inset-0 w-full h-full pointer-events-none z-0" style={{ perspective: '1200px', transformStyle: 'preserve-3d' }}>
+          {phase === 'about' && aboutLinesRef.current.map((line) => (
+            <div
+              key={line.id}
+              className="about-line absolute left-1/2 top-1/2 select-none pointer-events-none text-center max-w-lg"
+              data-idx={line.idx}
+              style={{
+                transform: `translate(-50%, -50%) perspective(1000px) translate3d(0px, 0px, ${line.zOffset}px) scale(1)`,
+                opacity: 0,
+              }}
             >
-              <h1 className="text-2xl font-extralight tracking-[0.35em] text-stone-800 uppercase mb-4">
-                Ashwin's Alley
-              </h1>
-              <p className="text-xs font-light text-stone-400 tracking-widest leading-relaxed mb-10 uppercase">
-                A mind in pursuit of the unknown. A heart devoted to love.
+              <p className="text-sm md:text-base font-light text-stone-600 tracking-wide leading-relaxed">
+                {line.text}
               </p>
-              
-              <motion.button
-                id="enter-btn"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleStartApp();
-                }}
-                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-stone-300 text-xs font-light tracking-widest text-stone-600 uppercase hover:bg-stone-800 hover:text-[#FAF9F5] hover:border-stone-800 transition-all duration-300 outline-none"
-              >
-                <span>Enter Alley</span>
-              </motion.button>
-            </motion.div>
+            </div>
+          ))}
+          {phase === 'alley' && (
+            <AnimatePresence mode="popLayout">
+              {activeQuotes.map((quote) => (
+                <motion.div
+                  key={quote.id}
+                  initial={{ opacity: 0 }}
+                  animate={{ 
+                    opacity: isZooming ? 0.95 : (quote.fadeState === 'in' ? 0.95 : 0)
+                  }}
+                  exit={{ 
+                    opacity: 0
+                  }}
+                  transition={{ duration: 1.5, ease: "easeInOut" }}
+                  className="absolute"
+                  style={{
+                    left: `${quote.x}vw`,
+                    top: `${quote.y}vh`,
+                    zIndex: quote.depth > 1.0 ? 25 : 5,
+                  }}
+                >
+                  {/* 3D spatial zoom + parallax inner layout targeted dynamically via RAF */}
+                  <div
+                    className="parallax-quote select-none pointer-events-none text-left max-w-[210px] md:max-w-[290px]"
+                    data-depth={quote.depth}
+                    data-scale={quote.scale}
+                    style={{
+                      transform: `perspective(1000px) translate3d(0px, 0px, ${(quote.depth - 1.6) * 400}px) scale(${quote.scale})`,
+                      opacity: 0.95
+                    }}
+                  >
+                    <p className="text-sm md:text-base font-light leading-relaxed text-[#1C1917] tracking-wide select-none drop-shadow-[0_1px_2px_rgba(255,255,255,0.95)]">
+                      “{quote.text}”
+                    </p>
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          )}
+        </div>
+      )}
+
+      {/* 5b. Ashwin's Alley Click-to-Enter Prompt */}
+      <AnimatePresence>
+        {aboutComplete && phase === 'about' && (
+          <motion.div
+            key="ashwins-alley-prompt"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.8, ease: 'easeInOut' }}
+            className="absolute inset-0 z-40 flex items-center justify-center pointer-events-auto"
+          >
+            <button
+              onClick={() => {
+                targetScrollZRef.current = 0;
+                scrollZRef.current = 0;
+                setPhase('alley');
+                phaseRef.current = 'alley';
+                setAboutComplete(false);
+                setTimeout(() => audio.playWindchimeClick(0.35, 0.45), 100);
+                setTimeout(() => audio.playWindchimeClick(0.65, 0.50), 350);
+              }}
+              className="group flex flex-col items-center gap-3 px-8 py-4"
+            >
+              <span className="text-2xl md:text-3xl font-extralight tracking-[0.15em] text-stone-800 group-hover:text-stone-600 transition-colors duration-500">
+                Ashwin's Alley
+              </span>
+              <span className="text-[9px] font-mono tracking-widest text-stone-400 opacity-60 group-hover:opacity-0 transition-opacity duration-500">
+                Click to enter
+              </span>
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* 5. Scattered Romantic Quotes Layer with Real-Time Parallax Depth */}
-      {hasStarted && (
-        <div id="experience-viewport" className="absolute inset-0 w-full h-full pointer-events-none z-0" style={{ perspective: '1200px', transformStyle: 'preserve-3d' }}>
-          <AnimatePresence mode="popLayout">
-            {activeQuotes.map((quote) => (
-              <motion.div
-                key={quote.id}
-                initial={{ opacity: 0 }}
-                animate={{ 
-                  opacity: isZooming ? 0.95 : (quote.fadeState === 'in' ? 0.95 : 0)
-                }}
-                exit={{ 
-                  opacity: 0
-                }}
-                transition={{ duration: 1.5, ease: "easeInOut" }}
-                className="absolute"
-                style={{
-                  left: `${quote.x}vw`,
-                  top: `${quote.y}vh`,
-                  zIndex: quote.depth > 1.0 ? 25 : 5,
-                }}
-              >
-                {/* 3D spatial zoom + parallax inner layout targeted dynamically via RAF */}
-                <div
-                  className="parallax-quote select-none pointer-events-none text-left max-w-[210px] md:max-w-[290px]"
-                  data-depth={quote.depth}
-                  data-scale={quote.scale}
-                  style={{
-                    transform: `perspective(1000px) translate3d(0px, 0px, ${(quote.depth - 1.6) * 400}px) scale(${quote.scale})`,
-                    opacity: 0.95
-                  }}
-                >
-                  <p className="text-sm md:text-base font-light leading-relaxed text-[#1C1917] tracking-wide select-none drop-shadow-[0_1px_2px_rgba(255,255,255,0.95)]">
-                    “{quote.text}”
-                  </p>
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-      )}
-
       {/* 6. Rhombus Space Sanctuary Reveal driven by Spatial Zoom */}
-      {hasStarted && (
+      {phase === 'alley' && (
         <div
           ref={rhombusContainerRef}
           className="absolute inset-0 m-auto z-20 pointer-events-none flex flex-col items-center justify-center w-[360px] h-[360px]"
@@ -1541,22 +1704,19 @@ export default function App() {
       )}
 
       {/* Instruction Cue helper */}
-      {hasStarted && (
+      {(phase === 'about' || phase === 'alley') && (
         <motion.div
-          id="visual-cue"
           initial={{ opacity: 0 }}
-          animate={{ opacity: [0, 0.45, 0.45, 0] }}
-          transition={{
-            delay: 3,
-            duration: 8,
-            repeat: Infinity,
-            repeatDelay: 20,
-          }}
-          className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none text-[9px] font-mono tracking-widest text-stone-400 uppercase select-none text-center"
+          animate={{ opacity: 0.6 }}
+          transition={{ duration: 1, ease: 'easeOut' }}
+          className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 pointer-events-none text-[9px] font-mono tracking-widest text-stone-400 uppercase select-none text-center"
         >
           Move mouse to drift thoughts • Scroll to zoom • Click to ring chimes
         </motion.div>
       )}
+
+      {/* Quote submission */}
+      <QuoteSubmit />
     </div>
   );
 }

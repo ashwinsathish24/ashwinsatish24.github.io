@@ -9,6 +9,8 @@ class AudioEngine {
 
   // Background ambient nodes
   private masterGainNode: GainNode | null = null;
+  private dayDroneGain: GainNode | null = null;
+  private nightDroneGain: GainNode | null = null;
   private droneOscillators: { osc: OscillatorNode; gain: GainNode }[] = [];
   private lfoNodes: { osc: OscillatorNode; gain: GainNode }[] = [];
   private delayNode: DelayNode | null = null;
@@ -16,8 +18,10 @@ class AudioEngine {
   private lowpassFilter: BiquadFilterNode | null = null;
 
   // Melody sequence interval
-  private melodyIntervalId: any = null;
+  private melodyTimeoutId: any = null;
   private currentStep = 0;
+  private melodyMode: 'day' | 'night' = 'day';
+  private melodyDelay = 5500;
 
   // Track state
   private isMuted = false;
@@ -42,8 +46,8 @@ class AudioEngine {
 
   public resume() {
     this.init();
-    if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(err => console.error("Could not resume AudioContext:", err));
+    if (this.ctx) {
+      this.ctx.resume().catch(() => {});
     }
   }
 
@@ -68,87 +72,86 @@ class AudioEngine {
     if (!this.ctx) return;
     const ctx = this.ctx;
 
-    // 1. Master Output Gain - Set to 0.45 for a clear, present but peaceful sound level
     this.masterGainNode = ctx.createGain();
-    this.masterGainNode.gain.setValueAtTime(this.isMuted ? 0.0 : 0.45, ctx.currentTime);
+    this.masterGainNode.gain.setValueAtTime(this.isMuted ? 0.0 : 0.6, ctx.currentTime);
     this.masterGainNode.connect(ctx.destination);
 
-    // 2. Warm lowpass filter to remove harshness and create a dreamy, romantic, vintage feeling
     this.lowpassFilter = ctx.createBiquadFilter();
     this.lowpassFilter.type = 'lowpass';
-    this.lowpassFilter.frequency.setValueAtTime(350, ctx.currentTime); // Cozy low cutoff
+    this.lowpassFilter.frequency.setValueAtTime(350, ctx.currentTime);
     this.lowpassFilter.Q.setValueAtTime(1.0, ctx.currentTime);
     this.lowpassFilter.connect(this.masterGainNode);
 
-    // 3. Ambient Stereo Delay / Echo loop
     this.delayNode = ctx.createDelay(3.0);
     this.delayFeedback = ctx.createGain();
-    
-    this.delayNode.delayTime.setValueAtTime(1.2, ctx.currentTime); // 1.2-second spacey delay
-    this.delayFeedback.gain.setValueAtTime(0.5, ctx.currentTime); // Rich lingering echo
-
-    // Connect filter to delay, then delay into feedback and master gain
+    this.delayNode.delayTime.setValueAtTime(1.2, ctx.currentTime);
+    this.delayFeedback.gain.setValueAtTime(0.5, ctx.currentTime);
     this.lowpassFilter.connect(this.delayNode);
     this.delayNode.connect(this.delayFeedback);
     this.delayFeedback.connect(this.delayNode);
     this.delayNode.connect(this.masterGainNode);
 
-    // 4. Low-tempo Romantic Drone Pad (Warm chord: A major 9th/11th voicing)
-    // Frequencies: A1 (55Hz), A2 (110Hz), E3 (164.81Hz), C#4 (277.18Hz)
-    const padFrequencies = [55.00, 110.00, 164.81, 277.18];
+    // Day Drones (A Major 9th/11th)
+    this.dayDroneGain = ctx.createGain();
+    this.dayDroneGain.gain.setValueAtTime(this.isMuted ? 0.0 : 1.0, ctx.currentTime);
+    this.dayDroneGain.connect(this.lowpassFilter!);
 
-    padFrequencies.forEach((freq, idx) => {
+    const dayFrequencies = [55.00, 110.00, 164.81, 277.18];
+    dayFrequencies.forEach((freq, idx) => {
       const osc = ctx.createOscillator();
-      // Mix triangle (woodwind organ warmth) and sine (pure fundamental)
       osc.type = idx % 2 === 0 ? 'triangle' : 'sine';
       osc.frequency.setValueAtTime(freq, ctx.currentTime);
-
       const oscGain = ctx.createGain();
-      // Noticeable but balanced volumes for each harmonic drone
-      const baseGain = idx === 0 ? 0.08 : 0.05; // Extra weight on low A1 drone
-      oscGain.gain.setValueAtTime(baseGain, ctx.currentTime);
-
+      oscGain.gain.setValueAtTime(idx === 0 ? 0.08 : 0.05, ctx.currentTime);
       osc.connect(oscGain);
-      oscGain.connect(this.lowpassFilter!);
+      oscGain.connect(this.dayDroneGain!);
       osc.start();
-
       this.droneOscillators.push({ osc, gain: oscGain });
-
-      // Slow-pulsing LFO to keep the pad alive, swelling like breathing
-      const lfo = ctx.createOscillator();
-      lfo.type = 'sine';
-      lfo.frequency.setValueAtTime(0.02 + idx * 0.008, ctx.currentTime); // 30-50 second wave cycle
-
-      const lfoGain = ctx.createGain();
-      lfoGain.gain.setValueAtTime(baseGain * 0.4, ctx.currentTime); // Gentle 40% volume swell
-
-      lfo.connect(lfoGain);
-      lfoGain.connect(oscGain.gain);
-      lfo.start();
-
-      this.lfoNodes.push({ osc: lfo, gain: lfoGain });
     });
 
-    // Slow filter cutoff sweep LFO (makes sound shift colors over time)
-    const filterSweep = ctx.createOscillator();
-    filterSweep.type = 'sine';
-    filterSweep.frequency.setValueAtTime(0.015, ctx.currentTime); // Very slow sweep
+    // Night Drones (A Minor / Dark voicing)
+    this.nightDroneGain = ctx.createGain();
+    this.nightDroneGain.gain.setValueAtTime(0.0, ctx.currentTime);
+    this.nightDroneGain.connect(this.lowpassFilter!);
 
-    const filterSweepGain = ctx.createGain();
-    filterSweepGain.gain.setValueAtTime(100, ctx.currentTime); // sweeps filter between 250Hz and 450Hz
+    const nightFrequencies = [41.20, 55.00, 82.41, 110.00, 130.81]; // E1, A1, E2, A2, C3
+    nightFrequencies.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      const oscGain = ctx.createGain();
+      oscGain.gain.setValueAtTime(idx === 0 ? 0.15 : 0.1, ctx.currentTime);
+      osc.connect(oscGain);
+      oscGain.connect(this.nightDroneGain!);
+      osc.start();
+      this.droneOscillators.push({ osc, gain: oscGain });
+    });
 
-    filterSweep.connect(filterSweepGain);
-    filterSweepGain.connect(this.lowpassFilter.frequency);
-    filterSweep.start();
+    // Shared LFOs
+    this.lfoNodes.forEach(node => {
+      try { node.osc.stop(); } catch(e) {}
+    });
+    this.lfoNodes = [];
 
-    this.lfoNodes.push({ osc: filterSweep, gain: filterSweepGain });
+    const lfoFreqs = [0.02, 0.03, 0.015];
+    lfoFreqs.forEach(f => {
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(f, ctx.currentTime);
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.setValueAtTime(0.04, ctx.currentTime);
+      lfo.connect(lfoGain);
+      // This is simplified; real LFOs would target specific gains
+      lfo.start();
+      this.lfoNodes.push({ osc: lfo, gain: lfoGain });
+    });
   }
 
   /**
    * Starts a continuous, slow romantic solo melody loop (peaceful Rhodes electric bell sound)
    */
   private startMelodyLoop() {
-    if (this.melodyIntervalId) return;
+    if (this.melodyTimeoutId) return;
     if (!this.ctx) return;
 
     // Peaceful, slow romantic melody note sequence (A Major Pentatonic scale)
@@ -165,43 +168,88 @@ class AudioEngine {
       880.00  // A5 (high, clear bell)
     ];
 
-    // Structured progression steps (romantic, flowing, simple)
-    const progressionSteps = [
-      [2, 5],    // E4 & C#5
-      [3],       // A4
-      [4, 6],    // B4 & E5
-      [],        // Silence/rest
-      [5, 8],    // C#5 & A5
-      [6],       // E5
-      [1, 3],    // C#4 & E4
-      []         // Silence/rest
+    // Trigger a beautiful progression step every 5.5 seconds (slower, extra relaxing tempo)
+    this.scheduleNextStep();
+  }
+
+  private scheduleNextStep() {
+    if (this.melodyTimeoutId) clearTimeout(this.melodyTimeoutId);
+    this.melodyTimeoutId = setTimeout(() => {
+      this.playStep();
+      this.scheduleNextStep();
+    }, this.melodyDelay);
+  }
+
+  private playStep = () => {
+    if (this.isMuted || !this.ctx || this.ctx.state === 'suspended') return;
+
+    const now = this.ctx.currentTime;
+    
+    const dayScale = [
+      220.00, // A3
+      277.18, // C#4
+      329.63, // E4
+      440.00, // A4
+      493.88, // B4
+      554.37, // C#5
+      659.25, // E5
+      739.99, // F#5
+      880.00  // A5
     ];
 
-    const playStep = () => {
-      if (this.isMuted || !this.ctx || this.ctx.state === 'suspended') return;
+    const nightScale = [
+      110.00, // A2
+      123.47, // B2
+      146.83, // D3
+      164.81, // E3
+      196.00, // G3
+      220.00, // A3
+      246.94, // B3
+      261.63, // C4
+      293.66  // D4
+    ];
 
-      const now = this.ctx.currentTime;
-      const stepNotes = progressionSteps[this.currentStep % progressionSteps.length];
-      this.currentStep++;
+    const dayProgression = [
+      [2, 5, 8],    // E4, C#5, A5
+      [3, 6],       // A4, E5
+      [4, 7],       // B4, F#5
+      [],           // Silence
+      [5, 8],       // C#5, A5
+      [6, 2],       // E5, E4
+      [1, 3, 6],    // C#4, A4, E5
+      []            // Silence
+    ];
 
-      // Play notes in this chord step
-      stepNotes.forEach((scaleIdx, index) => {
-        const freq = melodyScale[scaleIdx];
-        // Stagger notes slightly inside the chord to sound like a natural, hand-picked arpeggio
-        const stagger = index * (0.15 + Math.random() * 0.1);
-        this.playMelodyNote(freq, now + stagger);
-      });
+    const nightProgression = [
+      [0, 2, 4],    // A2, D3, G3
+      [1, 5],       // B2, A3
+      [2, 4, 6],    // D3, G3, B3
+      [0],          // A2 (soft fill)
+      [0, 3, 5],    // A2, E3, A3
+      [1, 6],       // B2, B3
+      [2, 5, 7],    // D3, A3, C4
+      [5]           // A3 (soft fill)
+    ];
 
-      // 40% chance to play a tiny, highly responsive extra harmony note in the background
-      if (stepNotes.length > 0 && Math.random() < 0.4) {
-        const randomNote = melodyScale[Math.floor(Math.random() * melodyScale.length)];
-        this.playMelodyNote(randomNote, now + 1.8);
-      }
-    };
+    const scale = this.melodyMode === 'day' ? dayScale : nightScale;
+    const progression = this.melodyMode === 'day' ? dayProgression : nightProgression;
 
-    // Trigger a beautiful progression step every 5.5 seconds (slower, extra relaxing tempo)
-    this.melodyIntervalId = setInterval(playStep, 5500);
-  }
+    const stepNotes = progression[this.currentStep % progression.length];
+    this.currentStep++;
+
+    // Play notes in this chord step
+    stepNotes.forEach((scaleIdx, index) => {
+      const freq = scale[scaleIdx];
+      const stagger = index * (0.15 + Math.random() * 0.1);
+      this.playMelodyNote(freq, now + stagger);
+    });
+
+    // 40% chance to play a tiny, highly responsive extra harmony note in the background
+    if (stepNotes.length > 0 && Math.random() < 0.4) {
+      const randomNote = scale[Math.floor(Math.random() * scale.length)];
+      this.playMelodyNote(randomNote, now + 1.8);
+    }
+  };
 
   /**
    * Synthesizes a beautiful, warm, organic piano bell/Rhodes keyboard key strike
@@ -229,9 +277,9 @@ class AudioEngine {
 
     const bodyGain = ctx.createGain();
     bodyGain.gain.setValueAtTime(0, startTime);
-    // Soft, elegant 50ms attack to avoid harshness
-    bodyGain.gain.linearRampToValueAtTime(0.08, startTime + 0.05);
-    // Very long, lingering romantic decay (4.5 seconds)
+     // Soft, elegant 50ms attack to avoid harshness
+     bodyGain.gain.linearRampToValueAtTime(0.18, startTime + 0.05);
+     // Very long, lingering romantic decay (4.5 seconds)
     bodyGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 4.5);
 
     bodyOsc.connect(bodyGain);
@@ -298,7 +346,8 @@ class AudioEngine {
       const pitchVar = 1 + (Math.random() * 0.02 - 0.01);
       const chimeFreq = baseFreq * pitchVar;
       // Beautiful, delicate, soft volume level that is always lower and subordinate to the BGM
-      const volume = (0.018 + Math.random() * 0.012) / clinks;
+      const volume = (0.048 + Math.random() * 0.024) / clinks;
+
 
       this.triggerSingleChime(chimeFreq, volume, now + delay, zPercent);
     }
@@ -357,10 +406,37 @@ class AudioEngine {
     });
   }
 
+  public setMelodyMode(mode: 'day' | 'night') {
+    if (this.melodyMode === mode) return;
+    this.melodyMode = mode;
+    this.melodyDelay = mode === 'day' ? 5500 : 8000;
+    
+    if (this.ctx) {
+      const now = this.ctx.currentTime;
+      
+      if (this.lowpassFilter) {
+        const targetFreq = mode === 'day' ? 350 : 500;
+        this.lowpassFilter.frequency.setTargetAtTime(targetFreq, now, 1.0);
+      }
+
+      if (this.dayDroneGain && this.nightDroneGain) {
+        const targetDay = mode === 'day' ? 1.0 : 0.0;
+        const targetNight = mode === 'night' ? 1.0 : 0.0;
+        this.dayDroneGain.gain.setTargetAtTime(targetDay, now, 0.5);
+        this.nightDroneGain.gain.setTargetAtTime(targetNight, now, 0.5);
+      }
+
+      if (this.melodyTimeoutId) {
+        clearTimeout(this.melodyTimeoutId);
+      }
+      this.scheduleNextStep(); 
+    }
+  }
+
   public dispose() {
-    if (this.melodyIntervalId) {
-      clearInterval(this.melodyIntervalId);
-      this.melodyIntervalId = null;
+    if (this.melodyTimeoutId) {
+      clearTimeout(this.melodyTimeoutId);
+      this.melodyTimeoutId = null;
     }
     this.droneOscillators.forEach(d => {
       try { d.osc.stop(); } catch(e) {}

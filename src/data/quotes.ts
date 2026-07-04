@@ -1,44 +1,29 @@
 import { Quote } from '../types';
+import { supabase } from '../lib/supabase';
 
-export const QUOTES: Quote[] = [
-  { text: "In a room full of art, I'd still stare at you.", category: "romantic" },
-  { text: "You are my favorite notification.", category: "one-liner" },
-  { text: "We are all stories in the end, let's make ours a bestseller.", category: "thoughtful" },
-  { text: "I think of you in colors that don't exist.", category: "romantic" },
-  { text: "You look like the rest of my life.", category: "romantic" },
-  { text: "I love you past the limits of time and space.", category: "romantic" },
-  { text: "You are the poetry I never knew how to write.", category: "romantic" },
-  { text: "Let's be weird and wonderful together.", category: "one-liner" },
-  { text: "I looked at you, and suddenly all the love songs made sense.", category: "romantic" },
-  { text: "We were written in the stars, even the dusty ones.", category: "thoughtful" },
-  { text: "I'd choose you in a hundred lifetimes.", category: "romantic" },
-  { text: "If I had a flower for every time I thought of you, I could walk through my garden forever.", category: "romantic" },
-  { text: "I still fall for you every single day.", category: "romantic" },
-  { text: "You are my today and all of my tomorrows.", category: "romantic" },
-  { text: "Let's wander where the connection is real, even if the Wi-Fi is weak.", category: "thoughtful" },
-  { text: "You are my blue sky on a rainy afternoon.", category: "romantic" },
-  { text: "The best things in life are even better when shared with you.", category: "romantic" },
-  { text: "Are you made of copper and tellurium? Because you are CuTe.", category: "one-liner" },
-  { text: "Do you believe in love at first sight, or should I float by again?", category: "one-liner" },
-  { text: "You had me at the very first click.", category: "one-liner" },
-  { text: "We're all fools in love, some of us just write code about it.", category: "one-liner" },
-  { text: "In the arithmetic of love, one plus one equals everything.", category: "thoughtful" },
-  { text: "Your smile is a keyframe I'll never skip.", category: "one-liner" },
-  { text: "I am yours. No refunds, no returns.", category: "one-liner" },
-  { text: "To the world you may be one person, but to me you are the world.", category: "romantic" },
-  { text: "I love you more than code compilation succeeding on the first try.", category: "one-liner" },
-  { text: "Every storm is peaceful when I am standing by your side.", category: "romantic" },
-  { text: "I love you because the entire universe conspired to help me find you.", category: "romantic" },
-  { text: "Whatever our souls are made of, his and mine are the same.", category: "romantic" },
-  { text: "You are the finest, loveliest, tenderest, and most beautiful person I have ever known.", category: "romantic" },
-  { text: "Grow old along with me! The best is yet to be.", category: "romantic" },
-  { text: "I am who I am because of you.", category: "romantic" },
-  { text: "You make me want to be a better person.", category: "thoughtful" },
-  { text: "Love is a game that two can play and both win.", category: "one-liner" },
-  { text: "We find comfort in those who agree with us, and growth in those who don't.", category: "thoughtful" },
-  { text: "Live in the sunshine, swim the sea, drink the wild air.", category: "thoughtful" },
-  { text: "The only way to have a friend is to be one.", category: "thoughtful" },
-  { text: "A single soul dwelling in two bodies.", category: "romantic" },
-  { text: "We love because it's the only true adventure.", category: "thoughtful" },
-  { text: "Sometimes the heart sees what is invisible to the eye.", category: "thoughtful" }
-];
+export async function getQuotes(): Promise<Quote[]> {
+  try {
+    const { data, error } = await supabase
+      .from('quotes')
+      .select('id, text, category, author_name, approved, created_at')
+      .eq('approved', true)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      return data.map(row => ({
+        text: row.text,
+        category: row.category as Quote['category'],
+        id: row.id,
+        author_name: row.author_name ?? undefined,
+        approved: row.approved,
+        created_at: row.created_at,
+      }));
+    }
+  } catch (e) {
+    console.warn('Failed to fetch quotes from Supabase:', e);
+  }
+
+  return [];
+}

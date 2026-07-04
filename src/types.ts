@@ -1,6 +1,10 @@
 export interface Quote {
   text: string;
   category: 'romantic' | 'thoughtful' | 'one-liner';
+  id?: string;
+  author_name?: string;
+  approved?: boolean;
+  created_at?: string;
 }
 
 export interface FloatingQuoteInstance {
@@ -13,6 +17,14 @@ export interface FloatingQuoteInstance {
   depth: number; // 3D depth multiplier for parallax
   fadeState: 'in' | 'out'; // Custom state tracking for staggered fade loops
   createdAt: number;
+}
+
+export interface AboutLineInstance {
+  id: string;
+  text: string;
+  idx: number;
+  depth: number;
+  zOffset: number;
 }
 
 export interface ChimeRipple {
