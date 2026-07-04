@@ -16,6 +16,13 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [muteNotice, setMuteNotice] = useState<string | null>(null);
 
+  // Synchronized state refs for closure safety in RAF loop
+  const hasStartedRef = useRef(false);
+  const isHoveringRef = useRef(false);
+  useEffect(() => {
+    hasStartedRef.current = hasStarted;
+  }, [hasStarted]);
+
   // Scattered floating quotes state
   const [activeQuotes, setActiveQuotes] = useState<FloatingQuoteInstance[]>([]);
   const quoteQueueIndexRef = useRef(0);
@@ -25,12 +32,15 @@ export default function App() {
 
   // Track finished quotes and forgetful place mode
   const [finishedQuotesCount, setFinishedQuotesCount] = useState(0);
-  const [isForgetfulPlace, setIsForgetfulPlace] = useState(false);
   const [reachedZoomEnd, setReachedZoomEnd] = useState(false);
 
   // Canvas and parallax tracking references
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const appContainerRef = useRef<HTMLDivElement | null>(null);
+  const glowOverlayRef = useRef<HTMLDivElement | null>(null);
+  const rhombusContainerRef = useRef<HTMLDivElement | null>(null);
+  const textRef = useRef<HTMLDivElement | null>(null);
+  const emittingDotRef = useRef<HTMLDivElement | null>(null);
   
   // High-performance mouse positioning
   const mouseRef = useRef({ x: 0, y: 0, targetX: 0, targetY: 0 });
@@ -50,6 +60,9 @@ export default function App() {
   const hasPassedStartRef = useRef(false);
   const reachedZoomEndRef = useRef(false);
   const lastChimeZRef = useRef(0);
+  const lastScrollTimeRef = useRef(Date.now());
+  const lastInteractionTimeRef = useRef(Date.now());
+  const idleProgressRef = useRef(0);
   const triggerRefreshRef = useRef<() => void>(() => {});
 
   // Sync state to ref for stale closure prevention in interval timers
@@ -72,7 +85,11 @@ export default function App() {
   // Wheel event listener for spatial Z-zoom depth
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
-      if (!hasStarted || isForgetfulPlace) return;
+      if (!hasStarted) return;
+
+      // Reset activity and idle timer on scroll activity
+      lastScrollTimeRef.current = Date.now();
+      lastInteractionTimeRef.current = Date.now();
 
       // Prioritize active zoom mode
       setIsZooming(true);
@@ -86,15 +103,15 @@ export default function App() {
       // REVERSED scroll: scrolling down (deltaY > 0) pulls out, scrolling up (deltaY < 0) zooms deeper
       targetScrollZRef.current -= e.deltaY * 0.75;
       
-      // Clamp target zoom range: 0 (starting depth) to 2500 (end of spatial layout)
-      targetScrollZRef.current = Math.max(0, Math.min(2500, targetScrollZRef.current));
+      // Clamp target zoom range: 0 (starting depth) to 4200 (end of spatial layout)
+      targetScrollZRef.current = Math.max(0, Math.min(4200, targetScrollZRef.current));
     };
 
     window.addEventListener('wheel', handleWheel, { passive: true });
     return () => {
       window.removeEventListener('wheel', handleWheel);
     };
-  }, [hasStarted, isForgetfulPlace]);
+  }, [hasStarted]);
 
   // Shuffle quotes initially to give a random flow every session
   const shuffledQuotesRef = useRef<typeof QUOTES>([]);
@@ -146,6 +163,33 @@ export default function App() {
     mouseRef.current.targetY = height / 2;
 
     const render = () => {
+      // Interpolate spatial zoom Z position with a slower, more cozy cinematic drift
+      scrollZRef.current += (targetScrollZRef.current - scrollZRef.current) * 0.05;
+      const sz = scrollZRef.current;
+
+      // Update Memories Idle Progress in the silent space (sz >= 4100)
+      const inSilentSpace = sz >= 4100;
+      const isIdle = inSilentSpace && (Date.now() - lastScrollTimeRef.current >= 5000);
+      const targetIdleProgress = isIdle ? 1.0 : 0.0;
+      // Smoothly interpolate idle progress
+      idleProgressRef.current += (targetIdleProgress - idleProgressRef.current) * 0.04;
+      const idleProgress = idleProgressRef.current;
+
+      // Cursor normalization when left idle (for 5 seconds, regardless of space)
+      const isIdleGeneral = Date.now() - lastInteractionTimeRef.current >= 5000;
+      if (isIdleGeneral) {
+        const centerX = width / 2;
+        const centerY = height / 2;
+        
+        // Smoothly drift the target coordinates of the mouse to the center
+        mouseRef.current.targetX += (centerX - mouseRef.current.targetX) * 0.05;
+        mouseRef.current.targetY += (centerY - mouseRef.current.targetY) * 0.05;
+
+        // Smoothly drift the parallax target to center as well
+        parallaxRef.current.targetX += (0 - parallaxRef.current.targetX) * 0.05;
+        parallaxRef.current.targetY += (0 - parallaxRef.current.targetY) * 0.05;
+      }
+
       // 1. Interpolate mouse positions for smooth trailing spotlight look
       const mouse = mouseRef.current;
       mouse.x += (mouse.targetX - mouse.x) * 0.12;
@@ -156,15 +200,18 @@ export default function App() {
       parallax.x += (parallax.targetX - parallax.x) * 0.08;
       parallax.y += (parallax.targetY - parallax.y) * 0.08;
 
-      // Interpolate spatial zoom Z position
-      scrollZRef.current += (targetScrollZRef.current - scrollZRef.current) * 0.08;
-      const sz = scrollZRef.current;
+      // Calculate quote dissolution progress (clamped 0 to 1)
+      // Quotes dissolve completely by sz = 1500 before Rhombus appears
+      const pQuotes = Math.max(0, Math.min(1, (sz - 1200) / 300));
+
+      // Calculate deep zoom progress for the transition (clamped 0 to 1)
+      const pZoom = sz >= 3000 ? Math.max(0, Math.min(1, (sz - 3000) / 1200)) : 0;
 
       // Actively trigger beautiful windchimes at discrete steps as they zoom/travel through Z-space
       if (isZoomingRef.current) {
         const diff = Math.abs(sz - lastChimeZRef.current);
         if (diff >= 180) {
-          const zPercent = sz / 2500;
+          const zPercent = sz / 4200;
           audio.playWindchimeClick(0.5, 0.5, zPercent);
           lastChimeZRef.current = sz;
         }
@@ -176,8 +223,8 @@ export default function App() {
       // 2b. Check boundary transitions and update reachedZoomEnd state dynamically
       if (isZoomingRef.current || sz > 5) {
         // We set reachedZoomEnd to true only when they are very close to the end of the zoom,
-        // and they are NOT actively scrolling back out (targetScrollZRef.current >= 2380)
-        const reachedEnd = sz >= 2380 && targetScrollZRef.current >= 2380;
+        // and they are NOT actively scrolling back out (targetScrollZRef.current >= 4050)
+        const reachedEnd = sz >= 4050 && targetScrollZRef.current >= 4050;
         if (reachedEnd !== reachedZoomEndRef.current) {
           reachedZoomEndRef.current = reachedEnd;
           setReachedZoomEnd(reachedEnd);
@@ -185,11 +232,11 @@ export default function App() {
 
         // Handle infinite-alley refreshing when crossing boundaries
         // Passing past the zoom-in limit (all items faded out):
-        if (sz >= 2380) {
+        if (sz >= 4050) {
           if (!hasPassedEndRef.current) {
             hasPassedEndRef.current = true;
           }
-        } else if (sz < 2100) {
+        } else if (sz < 1200) {
           // If they zoom back (scrolling out), refresh quotes to give them a completely fresh set of thoughts!
           if (hasPassedEndRef.current) {
             hasPassedEndRef.current = false;
@@ -223,6 +270,163 @@ export default function App() {
         }
       }
 
+      // Transition smoothly from light off-white (Space 1) to dark space (Space 2) based on pZoom
+      const container = appContainerRef.current;
+      if (container) {
+        const r = Math.round(250 + (8 - 250) * pZoom);
+        const g = Math.round(249 + (12 - 249) * pZoom);
+        const b = Math.round(245 + (22 - 245) * pZoom);
+        container.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
+
+        const textR = Math.round(28 + (250 - 28) * pZoom);
+        const textG = Math.round(25 + (249 - 25) * pZoom);
+        const textB = Math.round(23 + (245 - 23) * pZoom);
+        container.style.color = `rgb(${textR}, ${textG}, ${textB})`;
+
+        container.style.cursor = 'none';
+      }
+
+      // Smoothly fade out ambient parchment paper radial glow based on pZoom
+      if (glowOverlayRef.current) {
+        glowOverlayRef.current.style.opacity = String(1 - pZoom);
+      }
+
+      // Declare variables for canvas backlight glow and custom cursor dot split-rendering
+      let currentRhombusScale = 0.85;
+      let currentPFill = 0;
+
+      // Handle Rhombus Space Sanctuary reveal
+      if (rhombusContainerRef.current) {
+        let rhombusScale = 0.85;
+        let rhombusOpacity = 0;
+        let borderProgress = 0;
+        let textOpacity = 0;
+        let dotOpacity = 0;
+        let pFill = 0;
+
+        // Continuous scale update to avoid size resets and resize jerks
+        if (sz >= 1500) {
+          const baseGrowth = ((sz - 1500) / 1500) * 0.40; // grows from 0 to 0.72 over range 1500-3000
+          const acceleration = pZoom > 0 ? Math.pow(pZoom, 2.0) * 98.43 : 0; // accelerates to 98.43 over range 3000-4200
+          rhombusScale = 0.85 + baseGrowth + acceleration; // ranges smoothly from 0.85 to 100.0 at max zoom
+        }
+
+        if (sz < 1500) {
+          rhombusScale = 0.85;
+          rhombusOpacity = 0;
+          borderProgress = 0;
+          textOpacity = 0;
+          dotOpacity = 0;
+          pFill = 0;
+        } else if (sz >= 1500 && sz < 2300) {
+          // Step 1: Slow Border Reveal (800 units!)
+          const pAppear = (sz - 1500) / 800;
+          rhombusOpacity = Math.min(1.0, pAppear * 2.0);
+          borderProgress = pAppear;
+          textOpacity = 0;
+          dotOpacity = 0;
+          pFill = 0;
+        } else if (sz >= 2300 && sz < 2500) {
+          // Step 2: Fill & Color Morph (Border is complete, dark polygon fill fades in, text begins appearing)
+          rhombusOpacity = 1.0;
+          borderProgress = 1.0;
+          pFill = (sz - 2300) / 200;
+          textOpacity = pFill;
+          dotOpacity = 0;
+        } else if (sz >= 2500 && sz < 4000) {
+          // Step 3: Text Sanctuary Reveal (Within the dark filled space - text stays fully visible!)
+          rhombusOpacity = 1.0;
+          borderProgress = 1.0;
+          pFill = 1.0;
+          textOpacity = 1.0;
+          dotOpacity = 0;
+        } else {
+          // Step 4: Deep Zoom into Forgetful Place / Silent Space
+          rhombusOpacity = 1.0;
+          borderProgress = 1.0;
+          pFill = 1.0;
+          
+          // Text stays fully present during zoom, then gently fades out after sz passes 4000
+          textOpacity = Math.max(0, 1.0 - (sz - 4000) / 120);
+
+          // Central emitting dot appears smoothly ONLY after the text is fully faded out
+          dotOpacity = sz >= 4120 ? Math.min(1.0, (sz - 4120) / 80) : 0;
+        }
+
+        currentRhombusScale = rhombusScale;
+        currentPFill = pFill;
+
+        // Centered scale without translate offset
+        rhombusContainerRef.current.style.transform = `scale(${rhombusScale})`;
+        rhombusContainerRef.current.style.opacity = String(rhombusOpacity);
+        rhombusContainerRef.current.style.pointerEvents = sz >= 1600 ? 'auto' : 'none';
+
+        const rhombusFillEl = rhombusContainerRef.current.querySelector('#rhombus-fill');
+        if (rhombusFillEl) {
+          if (pFill > 0) {
+            rhombusFillEl.setAttribute('fill', `rgba(8, 12, 22, ${pFill})`);
+          } else {
+            rhombusFillEl.setAttribute('fill', 'none');
+          }
+        }
+
+        const borderPaths = rhombusContainerRef.current.querySelectorAll('.rhombus-border-path');
+        if (borderPaths) {
+          const len = 140;
+
+          // Color transition for the inner borders: from dark neutral to light neutral when filled
+          const pColor = pFill;
+          const innerR = Math.round(41 + pColor * 209);
+          const innerG = Math.round(37 + pColor * 212);
+          const innerB = Math.round(36 + pColor * 209);
+          const strokeColorInner = `rgb(${innerR}, ${innerG}, ${innerB})`;
+
+          // Outer border is drawn only on the light off-white background, so it MUST stay dark neutral to always be visible
+          const strokeColorOuter = 'rgb(41, 37, 36)';
+
+          // Calculate zoom-out fade for borders as we zoom inside the rhombus
+          const pZoomFade = sz >= 3000 ? Math.max(0, Math.min(1.0, (sz - 3000) / 1200)) : 0;
+
+          borderPaths.forEach((path) => {
+            const isInner = path.classList.contains('opacity-80');
+            
+            if (isInner) {
+              // Inner border: continuous line drawing dynamically drawing from 0% to 100%
+              (path as HTMLElement).style.strokeDasharray = String(len);
+              (path as HTMLElement).style.strokeDashoffset = String(len * (1 - borderProgress));
+              (path as HTMLElement).setAttribute('stroke', strokeColorInner);
+              (path as HTMLElement).style.opacity = String(0.8 * (1.0 - pZoomFade));
+            } else {
+              // Outer border: continuous line drawing that never stops drawing during zoom and never completes (maxes out at 92%)
+              const pOuter = sz >= 1500 ? Math.max(0, Math.min(1.0, (sz - 1500) / 2700)) : 0;
+              const outerFrac = Math.pow(pOuter, 0.5) * 0.92;
+              const outerOffset = len * (1.0 - outerFrac);
+              (path as HTMLElement).style.strokeDasharray = String(len);
+              (path as HTMLElement).style.strokeDashoffset = String(outerOffset);
+              (path as HTMLElement).setAttribute('stroke', strokeColorOuter);
+              (path as HTMLElement).style.opacity = String(1.0 - pZoomFade);
+            }
+          });
+        }
+
+        if (textRef.current) {
+          textRef.current.style.opacity = String(textOpacity);
+          // Zoom normalization: counteract the parent container's scaling factor to keep text at a fixed size
+          // but allow a very tiny amount of scale depth (10%) to give a subtle, premium parallax depth feeling!
+          // We combine translate(-50%, -50%) with scale to keep it perfectly centered without layout-flow sway.
+          const textVisualScale = 1.0 + pZoom * 0.10;
+          const normalizedTextScale = textVisualScale / rhombusScale;
+          textRef.current.style.transform = `translate(-50%, -50%) scale(${normalizedTextScale})`;
+        }
+
+        if (emittingDotRef.current) {
+          emittingDotRef.current.style.opacity = String(dotOpacity);
+          // Counteract the container scale so the central emitting dot stays exactly the same size on screen
+          const dotScale = 1.0 / rhombusScale;
+          emittingDotRef.current.style.transform = `translate(-50%, -50%) scale(${dotScale})`;
+        }
+      }
+
       // 3. Direct DOM Parallax & 3D Spatial Zoom Updates: Update all active quote transforms in raw JS.
       // This completely bypasses expensive React render cycles and solves any CSS calc() browser glitches,
       // creating an incredibly smooth, buttery 3D depth feeling.
@@ -244,10 +448,10 @@ export default function App() {
         // Apply true 3D spatial perspective transform for maximum immersion
         (el as HTMLElement).style.transform = `perspective(1000px) translate3d(${dx}px, ${dy}px, ${dz}px) scale(${scale})`;
         
-        // Smooth fade out as it flies close and past the camera plane
-        let opacity = 0.95;
+        // Smooth fade out as it flies close and past the camera plane, multiplied by (1 - pQuotes) to dissolve into deep space
+        let opacity = 0.95 * (1 - pQuotes);
         if (dz > 180) {
-          opacity = Math.max(0, 0.95 - (dz - 180) / 320);
+          opacity = Math.max(0, 0.95 * (1 - pQuotes) - (dz - 180) / 320);
         }
         (el as HTMLElement).style.opacity = opacity.toString();
         
@@ -274,7 +478,7 @@ export default function App() {
       const offsetX = Math.floor(Math.random() * 128);
       const offsetY = Math.floor(Math.random() * 128);
 
-      ctx.globalAlpha = 0.16; // soft vintage grain density
+      ctx.globalAlpha = 0.16 - pZoom * 0.08; // soft vintage grain density, slightly softer in dark theme
       for (let x = -128; x < width + 128; x += 128) {
         for (let y = -128; y < height + 128; y += 128) {
           ctx.drawImage(noiseCanvas, x + (offsetX % 8), y + (offsetY % 8));
@@ -310,7 +514,9 @@ export default function App() {
 
       // 6. Draw very subtle warm backlight halo under the cleared circular window
       ctx.globalCompositeOperation = 'destination-over';
-      const glowGrad = ctx.createRadialGradient(
+
+      // Define standard light/warm glow gradient (Alley style, or everywhere if currentPFill is 0)
+      const glowGradLight = ctx.createRadialGradient(
         mouse.x,
         mouse.y,
         20,
@@ -318,14 +524,361 @@ export default function App() {
         mouse.y,
         clearRadius
       );
-      glowGrad.addColorStop(0, 'rgba(255, 252, 238, 0.45)'); // warm off-white radial shine
-      glowGrad.addColorStop(0.5, 'rgba(253, 249, 234, 0.15)');
-      glowGrad.addColorStop(1, 'rgba(247, 244, 235, 0.0)');
-      
-      ctx.fillStyle = glowGrad;
-      ctx.beginPath();
-      ctx.arc(mouse.x, mouse.y, clearRadius, 0, Math.PI * 2);
-      ctx.fill();
+      // Soft warm off-white glow
+      glowGradLight.addColorStop(0, 'rgba(255, 252, 238, 0.45)');
+      glowGradLight.addColorStop(0.5, 'rgba(255, 252, 238, 0.15)');
+      glowGradLight.addColorStop(1, 'rgba(255, 252, 238, 0.0)');
+
+      // Soft mysterious light-blue/indigo glow for the dark filled space (fades out as core aspects appear)
+      const glowGradDark = ctx.createRadialGradient(
+        mouse.x,
+        mouse.y,
+        20,
+        mouse.x,
+        mouse.y,
+        clearRadius
+      );
+      const cursorGlowOpacityFactor = 1.0 - idleProgress;
+      glowGradDark.addColorStop(0, `rgba(165, 180, 252, ${0.04 * cursorGlowOpacityFactor})`);
+      glowGradDark.addColorStop(0.5, `rgba(165, 180, 252, ${0.008 * cursorGlowOpacityFactor})`);
+      glowGradDark.addColorStop(1, 'rgba(165, 180, 252, 0.0)');
+
+      if (currentPFill > 0) {
+        const cx = width / 2;
+        const cy = height / 2;
+        const halfSize = 157.5 * currentRhombusScale;
+
+        // --- DRAW LIGHT GLOW OUTSIDE THE RHOMBUS (using robust non-zero winding clip) ---
+        ctx.save();
+        ctx.beginPath();
+        // Outer boundary (clockwise)
+        ctx.moveTo(0, 0);
+        ctx.lineTo(width, 0);
+        ctx.lineTo(width, height);
+        ctx.lineTo(0, height);
+        ctx.closePath();
+        // Inner rhombus (counter-clockwise)
+        ctx.moveTo(cx, cy - halfSize);
+        ctx.lineTo(cx - halfSize, cy);
+        ctx.lineTo(cx, cy + halfSize);
+        ctx.lineTo(cx + halfSize, cy);
+        ctx.closePath();
+        ctx.clip();
+
+        ctx.fillStyle = glowGradLight;
+        ctx.beginPath();
+        ctx.arc(mouse.x, mouse.y, clearRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // --- DRAW DARK GLOW INSIDE THE RHOMBUS ---
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - halfSize);
+        ctx.lineTo(cx + halfSize, cy);
+        ctx.lineTo(cx, cy + halfSize);
+        ctx.lineTo(cx - halfSize, cy);
+        ctx.closePath();
+        ctx.clip();
+
+        ctx.fillStyle = glowGradDark;
+        ctx.beginPath();
+        ctx.arc(mouse.x, mouse.y, clearRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        // No filled rhombus, draw light glow everywhere
+        ctx.fillStyle = glowGradLight;
+        ctx.beginPath();
+        ctx.arc(mouse.x, mouse.y, clearRadius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 7. Draw custom cursor dot on top of everything
+      ctx.globalCompositeOperation = 'source-over';
+
+      // --- PHASE 3 - MEMORIES: Interactive constellation knowledge graph reveal ---
+      if (emittingDotRef.current) {
+        // Control emitting halos based on idleProgress
+        const halos = emittingDotRef.current.querySelectorAll('.rounded-full');
+        halos.forEach((halo) => {
+          const isHalo = halo.classList.contains('border') || halo.classList.contains('animate-ping') || halo.classList.contains('animate-pulse');
+          if (isHalo) {
+            (halo as HTMLElement).style.opacity = String((1.0 - idleProgress) * 0.4); // Scale down based on idleProgress
+          }
+        });
+      }
+
+      if (idleProgress > 0.01) {
+        const centerX = width / 2;
+        const centerY = height / 2;
+
+        const t = Date.now() * 0.0006;
+        const floatAmp = 8; // gentle float amplitude
+
+        const scaleFactor = Math.max(0.65, Math.min(1.1, Math.min(width, height) / 800));
+        const offsetA_X = -120 * scaleFactor;
+        const offsetA_Y = -120 * scaleFactor;
+        const offsetB_X = 140 * scaleFactor;
+        const offsetB_Y = -30 * scaleFactor;
+        const offsetC_X = -10 * scaleFactor;
+        const offsetC_Y = 135 * scaleFactor;
+
+        const nodeA = {
+          id: 'interests',
+          label: 'INTERESTS',
+          details: 'Philosophy  •  Minimal Design  •  Sound Synth  •  Creative Dev',
+          x: centerX + offsetA_X + Math.sin(t + 1.0) * floatAmp,
+          y: centerY + offsetA_Y + Math.cos(t + 1.5) * floatAmp,
+          labelYOffset: -20,
+          detailsYOffset: -36,
+          align: 'center' as const
+        };
+
+        const nodeB = {
+          id: 'academics',
+          label: 'ACADEMICS',
+          details: 'Computer Science  •  Deep Learning  •  Systems Architecture',
+          x: centerX + offsetB_X + Math.sin(t + 2.5) * floatAmp,
+          y: centerY + offsetB_Y + Math.cos(t + 3.0) * floatAmp,
+          labelYOffset: -20,
+          detailsYOffset: -36,
+          align: 'center' as const
+        };
+
+        const nodeC = {
+          id: 'goal',
+          label: 'GOAL',
+          details: 'Building Mindful Tools  •  Aesthetic Code  •  The Joy of Learning',
+          x: centerX + offsetC_X + Math.sin(t + 4.0) * floatAmp,
+          y: centerY + offsetC_Y + Math.cos(t + 4.5) * floatAmp,
+          labelYOffset: 24,
+          detailsYOffset: 40,
+          align: 'center' as const
+        };
+
+        const nodes = [nodeA, nodeB, nodeC];
+
+        // 1. Calculate distances from mouse to determine glows and hover effects
+        const distA = Math.sqrt(Math.pow(mouse.x - nodeA.x, 2) + Math.pow(mouse.y - nodeA.y, 2));
+        const distB = Math.sqrt(Math.pow(mouse.x - nodeB.x, 2) + Math.pow(mouse.y - nodeB.y, 2));
+        const distC = Math.sqrt(Math.pow(mouse.x - nodeC.x, 2) + Math.pow(mouse.y - nodeC.y, 2));
+        const minDist = Math.min(distA, distB, distC);
+
+        const maxDist = 320;
+        const baseGlowA = Math.max(0, 1 - distA / maxDist);
+        const baseGlowB = Math.max(0, 1 - distB / maxDist);
+        const baseGlowC = Math.max(0, 1 - distC / maxDist);
+
+        const isA_Closest = minDist === distA;
+        const isB_Closest = minDist === distB;
+        const isC_Closest = minDist === distC;
+
+        const glowA = Math.pow(baseGlowA, 1.5) * (isA_Closest ? 1.0 : 0.4);
+        const glowB = Math.pow(baseGlowB, 1.5) * (isB_Closest ? 1.0 : 0.4);
+        const glowC = Math.pow(baseGlowC, 1.5) * (isC_Closest ? 1.0 : 0.4);
+
+        const glowFactors = { interests: glowA, academics: glowB, goal: glowC };
+
+        // 2. Draw connection lines (constellation lines drawing themselves)
+        // From 0.3 to 1.0, connection lines draw themselves
+        const drawFrac = Math.max(0, Math.min(1.0, (idleProgress - 0.3) / 0.7));
+        if (drawFrac > 0) {
+          ctx.save();
+          ctx.strokeStyle = `rgba(250, 249, 245, ${0.12 * drawFrac})`;
+          ctx.lineWidth = 1.0;
+          ctx.setLineDash([4, 4]); // lovely dashed lines for a stellar feel!
+
+          const drawLine = (x1: number, y1: number, x2: number, y2: number) => {
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x1 + (x2 - x1) * drawFrac, y1 + (y2 - y1) * drawFrac);
+            ctx.stroke();
+          };
+
+          // Draw connections between the nodes
+          drawLine(nodeA.x, nodeA.y, nodeB.x, nodeB.y);
+          drawLine(nodeB.x, nodeB.y, nodeC.x, nodeC.y);
+          drawLine(nodeC.x, nodeC.y, nodeA.x, nodeA.y);
+
+          // Draw connections from the center (emitting dot) to the nodes
+          drawLine(centerX, centerY, nodeA.x, nodeA.y);
+          drawLine(centerX, centerY, nodeB.x, nodeB.y);
+          drawLine(centerX, centerY, nodeC.x, nodeC.y);
+
+          ctx.restore();
+        }
+
+        // 3. Draw nodes, labels, glows, and sub-details
+        nodes.forEach((node) => {
+          const factor = glowFactors[node.id as 'interests' | 'academics' | 'goal'];
+          const nodeOpacity = Math.min(1.0, idleProgress / 0.45);
+
+          // Draw glowing halo around node
+          if (factor > 0) {
+            ctx.save();
+            const radius = 60 * factor;
+            const radGrad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, radius);
+            // Even dimmer glow for the nodes in dark bg, matching the user's request
+            radGrad.addColorStop(0, `rgba(165, 180, 252, ${0.18 * factor * nodeOpacity})`);
+            radGrad.addColorStop(0.5, `rgba(165, 180, 252, ${0.05 * factor * nodeOpacity})`);
+            radGrad.addColorStop(1, 'rgba(165, 180, 252, 0.0)');
+            ctx.fillStyle = radGrad;
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+
+          // Draw the physical dot
+          ctx.save();
+          // Subtle pulsation for the dot
+          const pulse = 1.0 + Math.sin(Date.now() * 0.003 + (node.id === 'interests' ? 0 : node.id === 'academics' ? 2 : 4)) * 0.15;
+          ctx.fillStyle = `rgba(250, 249, 245, ${0.85 * nodeOpacity})`;
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, 3.5 * pulse, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Stroke ring
+          ctx.strokeStyle = `rgba(250, 249, 245, ${0.3 * nodeOpacity})`;
+          ctx.lineWidth = 1.0;
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, 7 * pulse, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+
+          // Draw main label (INTERESTS, ACADEMICS, GOAL)
+          ctx.save();
+          ctx.fillStyle = `rgba(250, 249, 245, ${0.75 * nodeOpacity})`;
+          ctx.font = '10px "Inter", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          // Add spacing to characters for high-end cinematic tracking
+          const spacedLabel = node.label.split('').join(' ');
+          ctx.fillText(spacedLabel, node.x, node.y + node.labelYOffset);
+          ctx.restore();
+
+          // Draw sub-details if the mouse is close (smoothly faded in)
+          const detailOpacity = Math.max(0, (factor - 0.22) / 0.78) * nodeOpacity;
+          if (detailOpacity > 0.01) {
+            ctx.save();
+            ctx.fillStyle = `rgba(250, 249, 245, ${0.5 * detailOpacity})`;
+            ctx.font = '9px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(node.details, node.x, node.y + node.detailsYOffset);
+            ctx.restore();
+          }
+        });
+      }
+
+      if (!hasStartedRef.current) {
+        // --- START OVERLAY CURSOR ---
+        if (isHoveringRef.current) {
+          // Hovering over the dark button: draw elegant light dot with dark stone stroke
+          ctx.save();
+          ctx.fillStyle = 'rgb(250, 249, 245)';
+          ctx.beginPath();
+          ctx.arc(mouse.x, mouse.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgb(28, 25, 23)';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+          ctx.restore();
+        } else {
+          // Idle on light background: draw sharp solid dark stone dot (no stroke to prevent fuzziness)
+          ctx.save();
+          ctx.fillStyle = 'rgb(28, 25, 23)';
+          ctx.beginPath();
+          ctx.arc(mouse.x, mouse.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      } else if (currentPFill > 0) {
+        const cx = width / 2;
+        const cy = height / 2;
+        const halfSize = 157.5 * currentRhombusScale;
+
+        // --- CURSOR OUTSIDE: Dark neutral fill with light stroke ---
+        ctx.save();
+        ctx.beginPath();
+        // Outer boundary (clockwise)
+        ctx.moveTo(0, 0);
+        ctx.lineTo(width, 0);
+        ctx.lineTo(width, height);
+        ctx.lineTo(0, height);
+        ctx.closePath();
+        // Inner rhombus (counter-clockwise)
+        ctx.moveTo(cx, cy - halfSize);
+        ctx.lineTo(cx - halfSize, cy);
+        ctx.lineTo(cx, cy + halfSize);
+        ctx.lineTo(cx + halfSize, cy);
+        ctx.closePath();
+        ctx.clip();
+
+        if (isHoveringRef.current) {
+          ctx.fillStyle = 'rgb(250, 249, 245)';
+          ctx.beginPath();
+          ctx.arc(mouse.x, mouse.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgb(28, 25, 23)';
+        } else {
+          ctx.fillStyle = 'rgb(28, 25, 23)';
+          ctx.beginPath();
+          ctx.arc(mouse.x, mouse.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgb(250, 249, 245)';
+        }
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.restore();
+
+        // --- CURSOR INSIDE: Light neutral fill with dark stroke ---
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - halfSize);
+        ctx.lineTo(cx + halfSize, cy);
+        ctx.lineTo(cx, cy + halfSize);
+        ctx.lineTo(cx - halfSize, cy);
+        ctx.closePath();
+        ctx.clip();
+
+        if (isHoveringRef.current) {
+          ctx.fillStyle = 'rgb(28, 25, 23)';
+          ctx.beginPath();
+          ctx.arc(mouse.x, mouse.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgb(250, 249, 245)';
+        } else {
+          ctx.fillStyle = 'rgb(250, 249, 245)';
+          ctx.beginPath();
+          ctx.arc(mouse.x, mouse.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgb(28, 25, 23)';
+        }
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        // --- INSIDE EXPERIENCE BEFORE RHOMBUS IS FILLED ---
+        ctx.save();
+        if (isHoveringRef.current) {
+          ctx.fillStyle = 'rgb(250, 249, 245)';
+          ctx.beginPath();
+          ctx.arc(mouse.x, mouse.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgb(28, 25, 23)';
+        } else {
+          ctx.fillStyle = 'rgb(28, 25, 23)';
+          ctx.beginPath();
+          ctx.arc(mouse.x, mouse.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgb(250, 249, 245)';
+        }
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.restore();
+      }
 
       // Restore composite mode
       ctx.globalCompositeOperation = 'source-over';
@@ -346,9 +899,26 @@ export default function App() {
     const mx = e.clientX;
     const my = e.clientY;
     
+    // Reset activity timers
+    lastInteractionTimeRef.current = Date.now();
+    lastScrollTimeRef.current = Date.now();
+    
     // Canvas spotlight target
     mouseRef.current.targetX = mx;
     mouseRef.current.targetY = my;
+
+    // Dynamically detect hover states on any interactive button/anchor under mouse cursor
+    const target = e.target as HTMLElement;
+    const isHovering = !!(
+      target && (
+        target.tagName === 'BUTTON' || 
+        target.tagName === 'A' || 
+        target.closest('button') !== null ||
+        target.closest('a') !== null ||
+        window.getComputedStyle(target).cursor === 'pointer'
+      )
+    );
+    isHoveringRef.current = isHovering;
 
     // Parallax displacement ratio relative to screen center (-1 to 1)
     const windowWidth = window.innerWidth;
@@ -367,6 +937,10 @@ export default function App() {
       const tx = e.touches[0].clientX;
       const ty = e.touches[0].clientY;
       
+      // Reset activity timers
+      lastInteractionTimeRef.current = Date.now();
+      lastScrollTimeRef.current = Date.now();
+      
       mouseRef.current.targetX = tx;
       mouseRef.current.targetY = ty;
 
@@ -382,7 +956,10 @@ export default function App() {
       const deltaY = ty - touchStartYRef.current; // reversed mapping
       touchStartYRef.current = ty;
       
-      if (hasStarted && !isForgetfulPlace) {
+      if (hasStarted) {
+        // Reset activity and idle timer on touch activity
+        lastScrollTimeRef.current = Date.now();
+
         // Prioritize active zoom mode
         setIsZooming(true);
         if (zoomTimeoutRef.current) {
@@ -393,7 +970,7 @@ export default function App() {
         }, 2500);
 
         targetScrollZRef.current += deltaY * 4.5;
-        targetScrollZRef.current = Math.max(0, Math.min(2500, targetScrollZRef.current));
+        targetScrollZRef.current = Math.max(0, Math.min(4200, targetScrollZRef.current));
       }
     }
   };
@@ -405,6 +982,10 @@ export default function App() {
     const xPercent = cx / window.innerWidth;
     const yPercent = cy / window.innerHeight;
 
+    // Reset activity and idle timer on click
+    lastScrollTimeRef.current = Date.now();
+    lastInteractionTimeRef.current = Date.now();
+
     // Warm-up the sound engine on first click
     if (!hasStarted) {
       audio.init();
@@ -413,7 +994,7 @@ export default function App() {
     }
 
     // Synthesize beautiful windchimes at mapped frequencies using the current Z-spatial depth!
-    const zPercent = scrollZRef.current / 2500;
+    const zPercent = scrollZRef.current / 4200;
     audio.playWindchimeClick(xPercent, yPercent, zPercent);
 
     // Create a physical click ripple expanding outwards
@@ -547,7 +1128,7 @@ export default function App() {
 
   // 2. Randomized Scattered Quotes Generator
   useEffect(() => {
-    if (!hasStarted || isForgetfulPlace) return;
+    if (!hasStarted) return;
 
     // Helper to pick a non-duplicate quote from the deck
     const getNextQuote = (currentActive: FloatingQuoteInstance[]) => {
@@ -593,8 +1174,8 @@ export default function App() {
 
     // Routine quote checker: every 3 seconds, if there are less than 5 quotes visible, spawn a new one!
     const spawnTimer = setInterval(() => {
-      // Prioritize active zoom, the forgetful button being visible, and the forgetful place mode
-      if (isZoomingRef.current || reachedZoomEndRef.current || isForgetfulPlace) return;
+      // Prioritize active zoom, or being deep in the rhombus transition (sz > 1600)
+      if (isZoomingRef.current || reachedZoomEndRef.current || scrollZRef.current > 1600) return;
 
       setActiveQuotes((prev) => {
         if (prev.length >= 5) return prev;
@@ -634,8 +1215,8 @@ export default function App() {
 
     // Lifespan timer: Slowly recycle individual quotes after 14 seconds of display
     const recycleTimer = setInterval(() => {
-      // Prioritize active zoom, the forgetful button being visible, and the forgetful place mode
-      if (isZoomingRef.current || reachedZoomEndRef.current || isForgetfulPlace) return;
+      // Prioritize active zoom, or being deep in the rhombus transition (sz > 1600)
+      if (isZoomingRef.current || reachedZoomEndRef.current || scrollZRef.current > 1600) return;
 
       const now = Date.now();
       let finishedThisBatch = 0;
@@ -670,7 +1251,7 @@ export default function App() {
       clearInterval(spawnTimer);
       clearInterval(recycleTimer);
     };
-  }, [hasStarted, isForgetfulPlace]);
+  }, [hasStarted]);
 
   // Ambient sound mute controller
   const handleMuteToggle = (e: MouseEvent) => {
@@ -705,77 +1286,18 @@ export default function App() {
     }, 350);
   };
 
-  // Toggle the forgetful place (zen sanctuary)
-  const handleToggleForgetfulPlace = (e: MouseEvent) => {
-    e.stopPropagation(); // prevent chime click triggering on screen
-    const nextState = !isForgetfulPlace;
-    setIsForgetfulPlace(nextState);
-    
-    if (nextState) {
-      // Clear all thoughts for absolute tranquility
-      setActiveQuotes([]);
-      // Play a peaceful, layered windchime wash
-      setTimeout(() => {
-        audio.playWindchimeClick(0.25, 0.45);
-      }, 100);
-      setTimeout(() => {
-        audio.playWindchimeClick(0.50, 0.50);
-      }, 300);
-      setTimeout(() => {
-        audio.playWindchimeClick(0.75, 0.55);
-      }, 500);
-    } else {
-      // Reset zoom depth so newly generated thoughts are positioned beautifully
-      scrollZRef.current = 0;
-      targetScrollZRef.current = 0;
-      setReachedZoomEnd(false);
-
-      // Re-populate thoughts smoothly
-      const initialQuotes: FloatingQuoteInstance[] = [];
-      const depthOptions = [0.4, 0.8, 1.2, 1.6];
-      const deck = shuffledQuotesRef.current.length > 0 ? shuffledQuotesRef.current : QUOTES;
-
-      for (let i = 0; i < 4; i++) {
-        const quote = deck[quoteQueueIndexRef.current % deck.length];
-        quoteQueueIndexRef.current++;
-        const depth = depthOptions[i % depthOptions.length];
-        const pos = generateCleanPlacement(initialQuotes, depth);
-        const computedScale = 0.7 + (depth * 0.35);
-
-        initialQuotes.push({
-          id: Math.random().toString(),
-          text: quote.text,
-          x: pos.x,
-          y: pos.y,
-          rotation: 0,
-          scale: computedScale,
-          depth: depth,
-          fadeState: 'in',
-          createdAt: Date.now() + i * 1500
-        });
-      }
-      setActiveQuotes(initialQuotes);
-      
-      // Gentle arpeggio of chimes when exiting
-      setTimeout(() => {
-        audio.playWindchimeClick(0.4, 0.6);
-      }, 150);
-      setTimeout(() => {
-        audio.playWindchimeClick(0.6, 0.4);
-      }, 400);
-    }
-  };
-
   return (
     <div
       id="app-container"
       ref={appContainerRef}
-      className={`relative w-screen h-screen overflow-hidden text-[#1C1917] select-none font-sans transition-colors duration-[2500ms] ease-in-out ${isForgetfulPlace ? 'bg-[#F2F1EA]' : 'bg-[#FAF9F5]'}`}
+      className="fixed inset-0 w-full h-full overflow-hidden text-[#1C1917] select-none font-sans bg-[#FAF9F5]"
       style={{
-        cursor: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><circle cx='6' cy='6' r='3.5' fill='%23292524' stroke='%23ffffff' stroke-width='1.5'/></svg>") 6 6, auto`
+        cursor: 'none'
       }}
       onMouseMove={handleMouseMove}
       onTouchStart={(e) => {
+        lastInteractionTimeRef.current = Date.now();
+        lastScrollTimeRef.current = Date.now();
         if (e.touches.length > 0) {
           touchStartYRef.current = e.touches[0].clientY;
         }
@@ -787,7 +1309,7 @@ export default function App() {
       <canvas
         id="grain-canvas"
         ref={canvasRef}
-        className="absolute inset-0 w-full h-full pointer-events-none z-10"
+        className="absolute inset-0 w-full h-full pointer-events-none z-50"
       />
 
       {/* 2. Interactive Click Ripples */}
@@ -822,7 +1344,10 @@ export default function App() {
       </div>
 
       {/* Warm parchment paper ambient radial glow */}
-      <div className="absolute inset-0 pointer-events-none z-0 bg-radial-gradient from-transparent via-[#F7F5EC]/40 to-[#ECE9DB]/60" />
+      <div
+        ref={glowOverlayRef}
+        className="absolute inset-0 pointer-events-none z-0 bg-radial-gradient from-transparent via-[#F7F5EC]/40 to-[#ECE9DB]/60"
+      />
 
       {/* 3. Top Right: Minimalistic branding & music controllers */}
       <div 
@@ -840,11 +1365,11 @@ export default function App() {
               {isMuted ? "PLAY MUSIC" : "MUTE MUSIC"}
             </span>
           )}
-          <span className="text-xs font-light tracking-[0.25em] text-stone-500 font-sans uppercase group-hover:text-stone-900 transition-colors">
+          <span className="text-xs font-light tracking-[0.25em] opacity-65 font-sans uppercase group-hover:opacity-100 transition-opacity">
             Ashwin's Alley
           </span>
           {hasStarted && (
-            <div className="text-stone-400 group-hover:text-stone-900 transition-colors ml-0.5">
+            <div className="opacity-50 group-hover:opacity-100 transition-opacity ml-0.5">
               {isMuted ? <VolumeX size={12} /> : <Volume2 size={12} className="animate-pulse" />}
             </div>
           )}
@@ -907,7 +1432,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* 5. Scattered Romantic Quotes Layer with Real-Time Parallax Depth */}
-      {hasStarted && !isForgetfulPlace && (
+      {hasStarted && (
         <div id="experience-viewport" className="absolute inset-0 w-full h-full pointer-events-none z-0" style={{ perspective: '1200px', transformStyle: 'preserve-3d' }}>
           <AnimatePresence mode="popLayout">
             {activeQuotes.map((quote) => (
@@ -948,59 +1473,72 @@ export default function App() {
         </div>
       )}
 
-      {/* 6. Forgetful Place Button Reveal at the End of the Spatial Zoom Layout */}
-      <AnimatePresence>
-        {((isZooming && reachedZoomEnd) || isForgetfulPlace) && (
-          <motion.div
-            id="forgetful-btn-container"
-            initial={{ opacity: 0, scale: 0.9, x: "-50%", y: "-50%" }}
-            animate={{ opacity: 1, scale: 1, x: "-50%", y: "-50%" }}
-            exit={{ opacity: 0, scale: 0.9, x: "-50%", y: "-50%" }}
-            transition={{ duration: 1.8, ease: "easeOut" }}
-            className={`absolute top-1/2 left-1/2 z-30 flex flex-col items-center justify-center ${
-              (!reachedZoomEnd && !isForgetfulPlace) ? 'pointer-events-none' : 'pointer-events-auto'
-            }`}
-            style={{ transform: "translate(-50%, -50%)" }}
-          >
-            {!isForgetfulPlace ? (
-              <motion.button
-                id="forgetful-btn"
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={handleToggleForgetfulPlace}
-                className="px-8 py-3.5 rounded-full border border-stone-300/80 text-[11px] font-light tracking-[0.25em] text-stone-600 uppercase bg-[#FAF9F5]/90 hover:bg-stone-800 hover:text-[#FAF9F5] hover:border-stone-800 transition-all duration-500 outline-none shadow-md backdrop-blur-sm"
-              >
-                A forgetful place
-              </motion.button>
-            ) : (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex flex-col items-center justify-center gap-6"
-              >
-                <div className="relative w-16 h-16 flex items-center justify-center">
-                  <div className="w-10 h-10 rounded-full border border-stone-400/30 animate-ping absolute" />
-                  <div className="w-4 h-4 rounded-full bg-stone-400/20" />
-                </div>
-                
-                <span className="text-[11px] font-light tracking-[0.35em] text-stone-500 uppercase text-center select-none max-w-xs leading-relaxed">
-                  Silence of empty space
-                </span>
+      {/* 6. Rhombus Space Sanctuary Reveal driven by Spatial Zoom */}
+      {hasStarted && (
+        <div
+          ref={rhombusContainerRef}
+          className="absolute inset-0 m-auto z-20 pointer-events-none flex flex-col items-center justify-center w-[360px] h-[360px]"
+          style={{ transform: 'scale(0)', opacity: 0 }}
+        >
+          {/* SVG for the double borders drawn from 4 corners */}
+          <svg className="absolute inset-0 w-full h-full overflow-visible" viewBox="0 0 400 400">
+            {/* Filled background of the rhombus gateway (Aligned with inner border vertices) */}
+            <polygon id="rhombus-fill" points="200,25 375,200 200,375 25,200" fill="none" stroke="none" />
 
-                <motion.button
-                  id="return-btn"
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={handleToggleForgetfulPlace}
-                  className="mt-4 px-6 py-2.5 rounded-full border border-stone-400 text-[9px] font-light tracking-[0.2em] text-stone-500 uppercase hover:bg-stone-800 hover:text-[#FAF9F5] hover:border-stone-800 transition-all duration-300 outline-none"
-                >
-                  Return to Alley
-                </motion.button>
-              </motion.div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+            {/* Outer Corner Paths */}
+            {/* Top Corner */}
+            <path className="rhombus-border-path" d="M 200 10 L 105 105" stroke="#FAF9F5" strokeWidth="1.5" fill="none" />
+            <path className="rhombus-border-path" d="M 200 10 L 295 105" stroke="#FAF9F5" strokeWidth="1.5" fill="none" />
+            {/* Right Corner */}
+            <path className="rhombus-border-path" d="M 390 200 L 295 105" stroke="#FAF9F5" strokeWidth="1.5" fill="none" />
+            <path className="rhombus-border-path" d="M 390 200 L 295 295" stroke="#FAF9F5" strokeWidth="1.5" fill="none" />
+            {/* Bottom Corner */}
+            <path className="rhombus-border-path" d="M 200 390 L 295 295" stroke="#FAF9F5" strokeWidth="1.5" fill="none" />
+            <path className="rhombus-border-path" d="M 200 390 L 105 295" stroke="#FAF9F5" strokeWidth="1.5" fill="none" />
+            {/* Left Corner */}
+            <path className="rhombus-border-path" d="M 10 200 L 105 295" stroke="#FAF9F5" strokeWidth="1.5" fill="none" />
+            <path className="rhombus-border-path" d="M 10 200 L 105 105" stroke="#FAF9F5" strokeWidth="1.5" fill="none" />
+
+            {/* Inner Corner Paths (Double Border) */}
+            {/* Top Corner */}
+            <path className="rhombus-border-path opacity-80" d="M 200 25 L 112 112" stroke="#FAF9F5" strokeWidth="1" strokeDasharray="3,3" fill="none" />
+            <path className="rhombus-border-path opacity-80" d="M 200 25 L 288 112" stroke="#FAF9F5" strokeWidth="1" strokeDasharray="3,3" fill="none" />
+            {/* Right Corner */}
+            <path className="rhombus-border-path opacity-80" d="M 375 200 L 288 112" stroke="#FAF9F5" strokeWidth="1" strokeDasharray="3,3" fill="none" />
+            <path className="rhombus-border-path opacity-80" d="M 375 200 L 288 288" stroke="#FAF9F5" strokeWidth="1" strokeDasharray="3,3" fill="none" />
+            {/* Bottom Corner */}
+            <path className="rhombus-border-path opacity-80" d="M 200 375 L 288 288" stroke="#FAF9F5" strokeWidth="1" strokeDasharray="3,3" fill="none" />
+            <path className="rhombus-border-path opacity-80" d="M 200 375 L 112 288" stroke="#FAF9F5" strokeWidth="1" strokeDasharray="3,3" fill="none" />
+            {/* Left Corner */}
+            <path className="rhombus-border-path opacity-80" d="M 25 200 L 112 288" stroke="#FAF9F5" strokeWidth="1" strokeDasharray="3,3" fill="none" />
+            <path className="rhombus-border-path opacity-80" d="M 25 200 L 112 112" stroke="#FAF9F5" strokeWidth="1" strokeDasharray="3,3" fill="none" />
+          </svg>
+
+          {/* Inner Text or Core element with absolute centering to prevent layout-flow and scaling sway artifacts */}
+          <div className="absolute inset-0 select-none pointer-events-none">
+            {/* "Silence of Empty Space" Text */}
+            <div
+              ref={textRef}
+              className="absolute top-1/2 left-1/2 text-center font-sans tracking-[0.3em] text-xs uppercase leading-relaxed font-light text-[#FAF9F5] whitespace-nowrap"
+              style={{ opacity: 0, transform: 'translate(-50%, -50%) scale(1)' }}
+            >
+              Silence of<br />Empty Space
+            </div>
+
+            {/* Emitting Dot (Zen core) */}
+            <div
+              ref={emittingDotRef}
+              className="absolute top-1/2 left-1/2 flex items-center justify-center w-24 h-24 pointer-events-none"
+              style={{ opacity: 0, transform: 'translate(-50%, -50%) scale(1)' }}
+            >
+              {/* Multiple expanding halo waves for a highly polished, nostalgic look */}
+              <div className="w-12 h-12 rounded-full border border-[#FAF9F5]/25 animate-ping absolute" />
+              <div className="w-20 h-20 rounded-full border border-[#FAF9F5]/10 animate-pulse absolute" style={{ animationDuration: '3s' }} />
+              <div className="w-3.5 h-3.5 rounded-full bg-[#FAF9F5] shadow-[0_0_15px_rgba(250,249,245,0.85)]" />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Instruction Cue helper */}
       {hasStarted && (
