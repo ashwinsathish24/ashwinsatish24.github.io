@@ -72,6 +72,7 @@ export default function App() {
   const lastChimeZRef = useRef(0);
   const lastScrollTimeRef = useRef(Date.now());
   const lastInteractionTimeRef = useRef(Date.now());
+  const lastTouchYRef = useRef(0);
   const idleProgressRef = useRef(0);
   const peakIdleProgressRef = useRef(0);
   const triggerRefreshRef = useRef<() => void>(() => {});
@@ -130,9 +131,40 @@ export default function App() {
       targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
     };
 
+    const handleTouchStart = (e: TouchEvent) => {
+      lastTouchYRef.current = e.touches[0].clientY;
+      audio.resume();
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      const deltaY = lastTouchYRef.current - touch.clientY;
+      lastTouchYRef.current = touch.clientY;
+
+      lastScrollTimeRef.current = Date.now();
+      lastInteractionTimeRef.current = Date.now();
+
+      if (phaseRef.current === 'alley') {
+        setIsZooming(true);
+        if (zoomTimeoutRef.current) {
+          clearTimeout(zoomTimeoutRef.current);
+        }
+        zoomTimeoutRef.current = setTimeout(() => {
+          setIsZooming(false);
+        }, 2500);
+      }
+
+      targetScrollZRef.current += deltaY * 0.75;
+      targetScrollZRef.current = Math.max(-2400, Math.min(4200, targetScrollZRef.current));
+    };
+
     window.addEventListener('wheel', handleWheel, { passive: true });
+    window.addEventListener('touchstart', handleTouchStart, { passive: true });
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
     return () => {
       window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('touchstart', handleTouchStart);
+      window.removeEventListener('touchmove', handleTouchMove);
     };
   }, []);
 
@@ -1045,9 +1077,6 @@ export default function App() {
     const mx = e.clientX;
     const my = e.clientY;
     
-    // Resume audio from user gesture (mouse move)
-    audio.resume();
-    
     // Reset activity timers
     lastInteractionTimeRef.current = Date.now();
     
@@ -1378,7 +1407,6 @@ export default function App() {
         cursor: 'none'
       }}
       onMouseMove={handleMouseMove}
-      onMouseDown={() => audio.resume()}
       onClick={handleScreenClick}
     >
       {/* 1. Animated Film Grain with Mouse Clearing Spotlight */}
