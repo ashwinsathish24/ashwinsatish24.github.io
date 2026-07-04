@@ -1,6 +1,0 @@
-{
-  "name": "Ashwin's Alley",
-  "description": "An interactive sensory experience featuring my entire life.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

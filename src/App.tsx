@@ -10,7 +10,7 @@ import { ABOUT_LINES } from './data/about';
 import QuoteSubmit from './components/QuoteSubmit';
 import { audio } from './utils/audio';
 import { Quote, ChimeRipple, FloatingQuoteInstance, AboutLineInstance } from './types';
-import { Volume2, VolumeX, Sparkles } from 'lucide-react';
+import { Volume2, VolumeX } from 'lucide-react';
 
 export default function App() {
   // Phase & intro states
